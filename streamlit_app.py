@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from io import BytesIO
 
 import pandas as pd
 import streamlit as st
 
 from rate_scraper import SourceConfig, scrape_all_sources
+
+try:
+    from streamlit_autorefresh import st_autorefresh
+except ImportError:  # pragma: no cover - fallback для окружений без пакета
+    st_autorefresh = None
 
 DEFAULT_SOURCES = [
     {
@@ -24,6 +30,8 @@ DEFAULT_SOURCES = [
         "parser": "boe_bank_rate",
     },
 ]
+
+AUTO_REFRESH_MS = 60 * 60 * 1000
 
 
 def _to_excel_bytes(dataframe: pd.DataFrame) -> bytes:
@@ -46,18 +54,46 @@ def _prepare_sources(raw_sources: pd.DataFrame) -> list[SourceConfig]:
     return cleaned
 
 
+def _sources_signature(sources: list[SourceConfig]) -> tuple[tuple[str, str, str], ...]:
+    return tuple((source.name, source.url, source.parser) for source in sources)
+
+
+def _refresh_results(source_configs: list[SourceConfig], reason: str) -> None:
+    with st.spinner("Идёт сбор данных..."):
+        st.session_state.results = scrape_all_sources(source_configs)
+    st.session_state.last_refresh_at_utc = datetime.now(timezone.utc)
+    st.session_state.last_refresh_reason = reason
+
+
 def main() -> None:
     st.set_page_config(page_title="Парсер процентных ставок", layout="wide")
     st.title("Парсер процентных ставок с выгрузкой в Excel")
     st.write(
-        "Добавьте сайты-источники ставок, нажмите **Собрать данные**, "
-        "после чего можно скачать итоговую таблицу в формате Excel."
+        "Добавьте сайты-источники ставок: данные загружаются автоматически при открытии страницы, "
+        "обновляются каждый час и по кнопке **Обновить сейчас**."
     )
 
     if "sources" not in st.session_state:
         st.session_state.sources = pd.DataFrame(DEFAULT_SOURCES)
     if "results" not in st.session_state:
         st.session_state.results = pd.DataFrame()
+    if "last_refresh_at_utc" not in st.session_state:
+        st.session_state.last_refresh_at_utc = None
+    if "last_refresh_reason" not in st.session_state:
+        st.session_state.last_refresh_reason = None
+    if "sources_signature" not in st.session_state:
+        st.session_state.sources_signature = None
+    if "last_auto_tick" not in st.session_state:
+        st.session_state.last_auto_tick = 0
+
+    auto_tick = 0
+    if st_autorefresh is not None:
+        auto_tick = st_autorefresh(interval=AUTO_REFRESH_MS, key="hourly_rates_refresh")
+    else:
+        st.warning(
+            "Пакет streamlit-autorefresh не установлен: автообновление раз в час отключено. "
+            "Работает только ручное обновление."
+        )
 
     source_editor = st.data_editor(
         st.session_state.sources,
@@ -77,20 +113,46 @@ def main() -> None:
 
     st.session_state.sources = source_editor
     source_configs = _prepare_sources(source_editor)
+    current_signature = _sources_signature(source_configs)
+    previous_signature = st.session_state.sources_signature
 
     left, right = st.columns([1, 3])
     with left:
-        collect = st.button("Собрать данные", type="primary", use_container_width=True)
+        refresh_now = st.button("Обновить сейчас", type="primary", use_container_width=True)
     with right:
         st.caption("Для неизвестных сайтов используйте parser = generic.")
 
-    if collect:
+    refresh_reason: str | None = None
+    if st.session_state.results.empty:
+        refresh_reason = "initial"
+    elif refresh_now:
+        refresh_reason = "manual"
+    elif st_autorefresh is not None and auto_tick != st.session_state.last_auto_tick:
+        refresh_reason = "hourly"
+    elif previous_signature is not None and current_signature != previous_signature:
+        refresh_reason = "sources_changed"
+
+    if refresh_reason:
         if not source_configs:
+            st.session_state.results = pd.DataFrame()
             st.warning("Добавьте хотя бы один валидный источник.")
         else:
-            with st.spinner("Идёт сбор данных..."):
-                st.session_state.results = scrape_all_sources(source_configs)
+            _refresh_results(source_configs, refresh_reason)
             st.success(f"Собрано источников: {len(st.session_state.results)}")
+
+    st.session_state.sources_signature = current_signature
+    st.session_state.last_auto_tick = auto_tick
+
+    if st.session_state.last_refresh_at_utc is not None:
+        reason_labels = {
+            "initial": "первичная загрузка",
+            "manual": "ручное обновление",
+            "hourly": "автообновление (1 час)",
+            "sources_changed": "изменение списка источников",
+        }
+        refreshed_at = st.session_state.last_refresh_at_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
+        refresh_label = reason_labels.get(st.session_state.last_refresh_reason, "обновление")
+        st.caption(f"Последнее обновление: {refreshed_at} ({refresh_label}).")
 
     results = st.session_state.results
     if not results.empty:
