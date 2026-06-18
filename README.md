@@ -14,6 +14,9 @@
   - `ecb_key_rates`
   - `boe_bank_rate`
   - `ester_rate` (для https://www.global-rates.com/en/interest-rates/ester/)
+  - `euribor_1m_rate` (для https://www.global-rates.com/en/interest-rates/euribor/)
+  - `euribor_3m_rate` (для https://www.global-rates.com/en/interest-rates/euribor/)
+  - `euribor_6m_rate` (для https://www.global-rates.com/en/interest-rates/euribor/)
   - `generic` (универсальный режим)
 - Выгрузка итоговой таблицы в файл `interest_rates.xlsx`.
 

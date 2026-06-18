@@ -38,6 +38,21 @@ RECOMMENDED_EXTRA_SOURCES = [
         "parser": "ester_rate",
     },
     {
+        "name": "EURIBOR 1M — global-rates",
+        "url": "https://www.global-rates.com/en/interest-rates/euribor/",
+        "parser": "euribor_1m_rate",
+    },
+    {
+        "name": "EURIBOR 3M — global-rates",
+        "url": "https://www.global-rates.com/en/interest-rates/euribor/",
+        "parser": "euribor_3m_rate",
+    },
+    {
+        "name": "EURIBOR 6M — global-rates",
+        "url": "https://www.global-rates.com/en/interest-rates/euribor/",
+        "parser": "euribor_6m_rate",
+    },
+    {
         "name": "ФРС США — Interest on Reserve Balances",
         "url": "https://www.federalreserve.gov/monetarypolicy/openmarket.htm",
         "parser": "generic",
@@ -108,16 +123,20 @@ def _append_missing_sources(
     if current_sources.empty:
         current_sources = pd.DataFrame(columns=["name", "url", "parser"])
 
-    existing_urls = {
-        str(url).strip().lower() for url in current_sources.get("url", pd.Series(dtype=str)).tolist() if str(url).strip()
-    }
+    existing_keys = set()
+    for row in current_sources.to_dict("records"):
+        url = str(row.get("url", "")).strip().lower()
+        parser = str(row.get("parser", "generic")).strip().lower()
+        if url:
+            existing_keys.add((url, parser))
+
     additions = []
     for source in candidate_sources:
-        source_url = source["url"].strip().lower()
-        if source_url in existing_urls:
+        source_key = (source["url"].strip().lower(), source["parser"].strip().lower())
+        if source_key in existing_keys:
             continue
         additions.append(source)
-        existing_urls.add(source_url)
+        existing_keys.add(source_key)
 
     if not additions:
         return current_sources, 0
@@ -195,7 +214,16 @@ def main() -> None:
             "url": st.column_config.TextColumn("URL", required=True),
             "parser": st.column_config.SelectboxColumn(
                 "Парсер",
-                options=["cbr_key_rate", "ecb_key_rates", "boe_bank_rate", "ester_rate", "generic"],
+                options=[
+                    "cbr_key_rate",
+                    "ecb_key_rates",
+                    "boe_bank_rate",
+                    "ester_rate",
+                    "euribor_1m_rate",
+                    "euribor_3m_rate",
+                    "euribor_6m_rate",
+                    "generic",
+                ],
                 required=True,
             ),
         },

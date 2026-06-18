@@ -117,6 +117,46 @@ def _parse_boe_bank_rate(html: str) -> tuple[float | None, str | None, str]:
     return _parse_generic_percentage(html)
 
 
+def _extract_first_global_rates_value(
+    lines: list[str], date_pattern: re.Pattern[str]
+) -> tuple[float | None, str | None]:
+    for index, line in enumerate(lines):
+        if not date_pattern.match(line):
+            continue
+        neighborhood = " ".join(lines[index : index + 3])
+        percentages = _extract_percentages(neighborhood, limit=1)
+        if percentages:
+            return percentages[0], line
+    return None, None
+
+
+def _extract_euribor_summary_value(
+    lines: list[str], date_pattern: re.Pattern[str], maturity_column: int
+) -> tuple[float | None, str | None]:
+    dates: list[str] = []
+    first_date_index: int | None = None
+    for index, line in enumerate(lines):
+        if date_pattern.match(line):
+            if first_date_index is None:
+                first_date_index = index
+            dates.append(line)
+            continue
+        if dates:
+            break
+
+    if not dates or first_date_index is None:
+        return None, None
+
+    date_count = len(dates)
+    percentages_text = " ".join(lines[first_date_index + date_count :])
+    required_count = (maturity_column + 1) * date_count
+    percentages = _extract_percentages(percentages_text, limit=max(required_count, 30))
+    target_index = maturity_column * date_count
+    if len(percentages) <= target_index:
+        return None, None
+    return percentages[target_index], dates[0]
+
+
 def _parse_ester_rate(html: str) -> tuple[float | None, str | None, str]:
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text("\n", strip=True)
@@ -135,11 +175,48 @@ def _parse_ester_rate(html: str) -> tuple[float | None, str | None, str]:
     return _parse_generic_percentage(html)
 
 
+def _parse_euribor_rate(
+    html: str, maturity_months: int, maturity_column: int
+) -> tuple[float | None, str | None, str]:
+    soup = BeautifulSoup(html, "lxml")
+    text = soup.get_text("\n", strip=True)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    lower_text = text.lower()
+    date_pattern = re.compile(r"^\d{2}-\d{2}-\d{4}$")
+
+    maturity_page_marker = f"{maturity_months}-month euribor interest rate"
+    if maturity_page_marker in lower_text:
+        rate, rate_date = _extract_first_global_rates_value(lines, date_pattern)
+        if rate is not None:
+            return rate, rate_date, f"Euribor {maturity_months}M (страница срока)."
+
+    summary_rate, summary_date = _extract_euribor_summary_value(lines, date_pattern, maturity_column)
+    if summary_rate is not None:
+        return summary_rate, summary_date, f"Euribor {maturity_months}M (сводная страница)."
+
+    return _parse_generic_percentage(html)
+
+
+def _parse_euribor_1m_rate(html: str) -> tuple[float | None, str | None, str]:
+    return _parse_euribor_rate(html, maturity_months=1, maturity_column=1)
+
+
+def _parse_euribor_3m_rate(html: str) -> tuple[float | None, str | None, str]:
+    return _parse_euribor_rate(html, maturity_months=3, maturity_column=2)
+
+
+def _parse_euribor_6m_rate(html: str) -> tuple[float | None, str | None, str]:
+    return _parse_euribor_rate(html, maturity_months=6, maturity_column=3)
+
+
 PARSERS: dict[str, Callable[[str], tuple[float | None, str | None, str]]] = {
     "cbr_key_rate": _parse_cbr_key_rate,
     "ecb_key_rates": _parse_ecb_key_rates,
     "boe_bank_rate": _parse_boe_bank_rate,
     "ester_rate": _parse_ester_rate,
+    "euribor_1m_rate": _parse_euribor_1m_rate,
+    "euribor_3m_rate": _parse_euribor_3m_rate,
+    "euribor_6m_rate": _parse_euribor_6m_rate,
     "generic": _parse_generic_percentage,
 }
 
