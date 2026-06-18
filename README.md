@@ -13,6 +13,7 @@
   - `cbr_key_rate`
   - `ecb_key_rates`
   - `boe_bank_rate`
+  - `ester_rate` (для https://www.global-rates.com/en/interest-rates/ester/)
   - `generic` (универсальный режим)
 - Выгрузка итоговой таблицы в файл `interest_rates.xlsx`.
 

@@ -33,6 +33,11 @@ DEFAULT_SOURCES = [
 
 RECOMMENDED_EXTRA_SOURCES = [
     {
+        "name": "ESTER — global-rates",
+        "url": "https://www.global-rates.com/en/interest-rates/ester/",
+        "parser": "ester_rate",
+    },
+    {
         "name": "ФРС США — Interest on Reserve Balances",
         "url": "https://www.federalreserve.gov/monetarypolicy/openmarket.htm",
         "parser": "generic",
@@ -190,7 +195,7 @@ def main() -> None:
             "url": st.column_config.TextColumn("URL", required=True),
             "parser": st.column_config.SelectboxColumn(
                 "Парсер",
-                options=["cbr_key_rate", "ecb_key_rates", "boe_bank_rate", "generic"],
+                options=["cbr_key_rate", "ecb_key_rates", "boe_bank_rate", "ester_rate", "generic"],
                 required=True,
             ),
         },

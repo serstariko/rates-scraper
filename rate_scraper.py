@@ -26,6 +26,7 @@ def _extract_first_date(text: str) -> str | None:
     patterns = (
         r"\b\d{2}\.\d{2}\.\d{4}\b",
         r"\b\d{4}-\d{2}-\d{2}\b",
+        r"\b\d{2}-\d{2}-\d{4}\b",
         r"\b\d{2}/\d{2}/\d{4}\b",
     )
     for pattern in patterns:
@@ -116,10 +117,29 @@ def _parse_boe_bank_rate(html: str) -> tuple[float | None, str | None, str]:
     return _parse_generic_percentage(html)
 
 
+def _parse_ester_rate(html: str) -> tuple[float | None, str | None, str]:
+    soup = BeautifulSoup(html, "lxml")
+    text = soup.get_text("\n", strip=True)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+    date_pattern = re.compile(r"^\d{2}-\d{2}-\d{4}$")
+    for index, line in enumerate(lines):
+        if not date_pattern.match(line):
+            continue
+        neighborhood = " ".join(lines[index : index + 3])
+        percentages = _extract_percentages(neighborhood, limit=1)
+        if not percentages:
+            continue
+        return percentages[0], line, "ESTER с global-rates.com (последнее значение)."
+
+    return _parse_generic_percentage(html)
+
+
 PARSERS: dict[str, Callable[[str], tuple[float | None, str | None, str]]] = {
     "cbr_key_rate": _parse_cbr_key_rate,
     "ecb_key_rates": _parse_ecb_key_rates,
     "boe_bank_rate": _parse_boe_bank_rate,
+    "ester_rate": _parse_ester_rate,
     "generic": _parse_generic_percentage,
 }
 
