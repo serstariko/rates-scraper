@@ -43,6 +43,10 @@ streamlit run streamlit_app.py
 - `parser` — тип парсера
 - `rate_percent` — найденная ставка в процентах
 - `rate_date` — дата ставки (если извлечена)
+- `previous_rate_percent` — предыдущее значение ставки
+- `previous_rate_date` — дата предыдущего значения
+- `relative_change_percent` — относительное изменение, % (`(текущее - предыдущее) / предыдущее * 100`)
+- `absolute_change_percent` — абсолютное изменение (`текущее - предыдущее`)
 - `status` — `ok`, `no_rate_found`, `error`
 - `details` — служебные детали парсинга
 - `error` — текст ошибки (если есть)

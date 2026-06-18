@@ -22,6 +22,15 @@ class SourceConfig:
     parser: str
 
 
+@dataclass(slots=True)
+class ParsedRate:
+    current_rate: float | None
+    current_date: str | None
+    previous_rate: float | None
+    previous_date: str | None
+    details: str
+
+
 def _extract_first_date(text: str) -> str | None:
     patterns = (
         r"\b\d{2}\.\d{2}\.\d{4}\b",
@@ -49,22 +58,74 @@ def _extract_percentages(text: str, limit: int = 5) -> list[float]:
     return values
 
 
-def _parse_generic_percentage(html: str) -> tuple[float | None, str | None, str]:
+def _extract_rate_date_pairs(lines: list[str], max_pairs: int = 2) -> list[tuple[float, str]]:
+    pairs: list[tuple[float, str]] = []
+    for index, line in enumerate(lines):
+        date_value = _extract_first_date(line)
+        if not date_value:
+            continue
+
+        neighborhood = " ".join(lines[index : index + 4])
+        percentages = _extract_percentages(neighborhood, limit=1)
+        if not percentages:
+            continue
+        pairs.append((percentages[0], date_value))
+        if len(pairs) >= max_pairs:
+            break
+    return pairs
+
+
+def _build_parsed_rate(
+    current_rate: float | None,
+    current_date: str | None,
+    details: str,
+    previous_rate: float | None = None,
+    previous_date: str | None = None,
+) -> ParsedRate:
+    return ParsedRate(
+        current_rate=current_rate,
+        current_date=current_date,
+        previous_rate=previous_rate,
+        previous_date=previous_date,
+        details=details,
+    )
+
+
+def _parse_generic_percentage(html: str) -> ParsedRate:
     soup = BeautifulSoup(html, "lxml")
-    text = soup.get_text(" ", strip=True)
-    percentages = _extract_percentages(text, limit=1)
-    rate = percentages[0] if percentages else None
-    rate_date = _extract_first_date(text)
+    lines = [line.strip() for line in soup.get_text("\n", strip=True).splitlines() if line.strip()]
+    text = " ".join(lines)
+    pairs = _extract_rate_date_pairs(lines, max_pairs=2)
+
+    rate = pairs[0][0] if pairs else None
+    rate_date = pairs[0][1] if pairs else _extract_first_date(text)
+    previous_rate = pairs[1][0] if len(pairs) > 1 else None
+    previous_date = pairs[1][1] if len(pairs) > 1 else None
+
+    if rate is None:
+        percentages = _extract_percentages(text, limit=2)
+        if percentages:
+            rate = percentages[0]
+        if len(percentages) > 1:
+            previous_rate = percentages[1]
+
     details = "Найдено автоматически по первому процентному значению."
-    return rate, rate_date, details
+    return _build_parsed_rate(
+        current_rate=rate,
+        current_date=rate_date,
+        previous_rate=previous_rate,
+        previous_date=previous_date,
+        details=details,
+    )
 
 
-def _parse_cbr_key_rate(html: str) -> tuple[float | None, str | None, str]:
+def _parse_cbr_key_rate(html: str) -> ParsedRate:
     soup = BeautifulSoup(html, "lxml")
     table = soup.find("table")
     if not table:
         return _parse_generic_percentage(html)
 
+    series: list[tuple[float, str | None]] = []
     for row in table.find_all("tr"):
         cells = [cell.get_text(" ", strip=True) for cell in row.find_all(("td", "th"))]
         if len(cells) < 2:
@@ -76,12 +137,25 @@ def _parse_cbr_key_rate(html: str) -> tuple[float | None, str | None, str]:
 
         rate_value = float(rate_match.group(1).replace(",", "."))
         date_value = _extract_first_date(cells[0])
-        return rate_value, date_value, "Ключевая ставка ЦБ РФ (табличный парсер)."
+        series.append((rate_value, date_value))
+        if len(series) >= 2:
+            break
+
+    if series:
+        previous_rate = series[1][0] if len(series) > 1 else None
+        previous_date = series[1][1] if len(series) > 1 else None
+        return _build_parsed_rate(
+            current_rate=series[0][0],
+            current_date=series[0][1],
+            previous_rate=previous_rate,
+            previous_date=previous_date,
+            details="Ключевая ставка ЦБ РФ (табличный парсер).",
+        )
 
     return _parse_generic_percentage(html)
 
 
-def _parse_ecb_key_rates(html: str) -> tuple[float | None, str | None, str]:
+def _parse_ecb_key_rates(html: str) -> ParsedRate:
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text("\n", strip=True)
     lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -92,16 +166,18 @@ def _parse_ecb_key_rates(html: str) -> tuple[float | None, str | None, str]:
         neighborhood = " ".join(lines[index : index + 4])
         percentages = _extract_percentages(neighborhood, limit=1)
         if percentages:
-            return (
-                percentages[0],
-                _extract_first_date(neighborhood),
-                "Основная ставка рефинансирования ЕЦБ.",
+            return _build_parsed_rate(
+                current_rate=percentages[0],
+                current_date=_extract_first_date(neighborhood),
+                previous_rate=None,
+                previous_date=None,
+                details="Основная ставка рефинансирования ЕЦБ.",
             )
 
     return _parse_generic_percentage(html)
 
 
-def _parse_boe_bank_rate(html: str) -> tuple[float | None, str | None, str]:
+def _parse_boe_bank_rate(html: str) -> ParsedRate:
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text("\n", strip=True)
     lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -112,12 +188,18 @@ def _parse_boe_bank_rate(html: str) -> tuple[float | None, str | None, str]:
         neighborhood = " ".join(lines[max(index - 2, 0) : index + 4])
         percentages = _extract_percentages(neighborhood, limit=1)
         if percentages:
-            return percentages[0], _extract_first_date(neighborhood), "Ставка Банка Англии."
+            return _build_parsed_rate(
+                current_rate=percentages[0],
+                current_date=_extract_first_date(neighborhood),
+                previous_rate=None,
+                previous_date=None,
+                details="Ставка Банка Англии.",
+            )
 
     return _parse_generic_percentage(html)
 
 
-def _parse_ruonia_rate(html: str) -> tuple[float | None, str | None, str]:
+def _parse_ruonia_rate(html: str) -> ParsedRate:
     soup = BeautifulSoup(html, "lxml")
     table = soup.find("table")
     if not table:
@@ -161,26 +243,38 @@ def _parse_ruonia_rate(html: str) -> tuple[float | None, str | None, str]:
     if not dates or not rates:
         return _parse_generic_percentage(html)
 
-    last_index = min(len(dates), len(rates)) - 1
-    return rates[last_index], dates[last_index], "Ставка RUONIA ЦБ РФ (табличный парсер)."
+    max_index = min(len(dates), len(rates)) - 1
+    previous_index = max_index - 1
+    previous_rate = rates[previous_index] if previous_index >= 0 else None
+    previous_date = dates[previous_index] if previous_index >= 0 else None
+    return _build_parsed_rate(
+        current_rate=rates[max_index],
+        current_date=dates[max_index],
+        previous_rate=previous_rate,
+        previous_date=previous_date,
+        details="Ставка RUONIA ЦБ РФ (табличный парсер).",
+    )
 
 
-def _extract_first_global_rates_value(
-    lines: list[str], date_pattern: re.Pattern[str]
-) -> tuple[float | None, str | None]:
+def _extract_global_rates_pairs(
+    lines: list[str], date_pattern: re.Pattern[str], max_pairs: int = 2
+) -> list[tuple[float, str]]:
+    pairs: list[tuple[float, str]] = []
     for index, line in enumerate(lines):
         if not date_pattern.match(line):
             continue
         neighborhood = " ".join(lines[index : index + 3])
         percentages = _extract_percentages(neighborhood, limit=1)
         if percentages:
-            return percentages[0], line
-    return None, None
+            pairs.append((percentages[0], line))
+            if len(pairs) >= max_pairs:
+                break
+    return pairs
 
 
-def _extract_euribor_summary_value(
-    lines: list[str], date_pattern: re.Pattern[str], maturity_column: int
-) -> tuple[float | None, str | None]:
+def _extract_euribor_summary_values(
+    lines: list[str], date_pattern: re.Pattern[str], maturity_column: int, max_pairs: int = 2
+) -> list[tuple[float, str]]:
     dates: list[str] = []
     first_date_index: int | None = None
     for index, line in enumerate(lines):
@@ -193,39 +287,47 @@ def _extract_euribor_summary_value(
             break
 
     if not dates or first_date_index is None:
-        return None, None
+        return []
 
     date_count = len(dates)
     percentages_text = " ".join(lines[first_date_index + date_count :])
     required_count = (maturity_column + 1) * date_count
-    percentages = _extract_percentages(percentages_text, limit=max(required_count, 30))
-    target_index = maturity_column * date_count
-    if len(percentages) <= target_index:
-        return None, None
-    return percentages[target_index], dates[0]
+    percentages = _extract_percentages(percentages_text, limit=max(required_count + date_count, 30))
+    target_start = maturity_column * date_count
+    target_end = target_start + date_count
+    selected_rates = percentages[target_start:target_end]
+
+    pairs: list[tuple[float, str]] = []
+    pair_count = min(len(selected_rates), len(dates), max_pairs)
+    for idx in range(pair_count):
+        pairs.append((selected_rates[idx], dates[idx]))
+    return pairs
 
 
-def _parse_ester_rate(html: str) -> tuple[float | None, str | None, str]:
+def _parse_ester_rate(html: str) -> ParsedRate:
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text("\n", strip=True)
     lines = [line.strip() for line in text.splitlines() if line.strip()]
 
     date_pattern = re.compile(r"^\d{2}-\d{2}-\d{4}$")
-    for index, line in enumerate(lines):
-        if not date_pattern.match(line):
-            continue
-        neighborhood = " ".join(lines[index : index + 3])
-        percentages = _extract_percentages(neighborhood, limit=1)
-        if not percentages:
-            continue
-        return percentages[0], line, "ESTER с global-rates.com (последнее значение)."
+    pairs = _extract_global_rates_pairs(lines, date_pattern, max_pairs=2)
+    if pairs:
+        previous_rate = pairs[1][0] if len(pairs) > 1 else None
+        previous_date = pairs[1][1] if len(pairs) > 1 else None
+        return _build_parsed_rate(
+            current_rate=pairs[0][0],
+            current_date=pairs[0][1],
+            previous_rate=previous_rate,
+            previous_date=previous_date,
+            details="ESTER с global-rates.com (последнее значение).",
+        )
 
     return _parse_generic_percentage(html)
 
 
 def _parse_euribor_rate(
     html: str, maturity_months: int, maturity_column: int
-) -> tuple[float | None, str | None, str]:
+) -> ParsedRate:
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text("\n", strip=True)
     lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -234,30 +336,46 @@ def _parse_euribor_rate(
 
     maturity_page_marker = f"{maturity_months}-month euribor interest rate"
     if maturity_page_marker in lower_text:
-        rate, rate_date = _extract_first_global_rates_value(lines, date_pattern)
-        if rate is not None:
-            return rate, rate_date, f"Euribor {maturity_months}M (страница срока)."
+        pairs = _extract_global_rates_pairs(lines, date_pattern, max_pairs=2)
+        if pairs:
+            previous_rate = pairs[1][0] if len(pairs) > 1 else None
+            previous_date = pairs[1][1] if len(pairs) > 1 else None
+            return _build_parsed_rate(
+                current_rate=pairs[0][0],
+                current_date=pairs[0][1],
+                previous_rate=previous_rate,
+                previous_date=previous_date,
+                details=f"Euribor {maturity_months}M (страница срока).",
+            )
 
-    summary_rate, summary_date = _extract_euribor_summary_value(lines, date_pattern, maturity_column)
-    if summary_rate is not None:
-        return summary_rate, summary_date, f"Euribor {maturity_months}M (сводная страница)."
+    summary_pairs = _extract_euribor_summary_values(lines, date_pattern, maturity_column, max_pairs=2)
+    if summary_pairs:
+        previous_rate = summary_pairs[1][0] if len(summary_pairs) > 1 else None
+        previous_date = summary_pairs[1][1] if len(summary_pairs) > 1 else None
+        return _build_parsed_rate(
+            current_rate=summary_pairs[0][0],
+            current_date=summary_pairs[0][1],
+            previous_rate=previous_rate,
+            previous_date=previous_date,
+            details=f"Euribor {maturity_months}M (сводная страница).",
+        )
 
     return _parse_generic_percentage(html)
 
 
-def _parse_euribor_1m_rate(html: str) -> tuple[float | None, str | None, str]:
+def _parse_euribor_1m_rate(html: str) -> ParsedRate:
     return _parse_euribor_rate(html, maturity_months=1, maturity_column=1)
 
 
-def _parse_euribor_3m_rate(html: str) -> tuple[float | None, str | None, str]:
+def _parse_euribor_3m_rate(html: str) -> ParsedRate:
     return _parse_euribor_rate(html, maturity_months=3, maturity_column=2)
 
 
-def _parse_euribor_6m_rate(html: str) -> tuple[float | None, str | None, str]:
+def _parse_euribor_6m_rate(html: str) -> ParsedRate:
     return _parse_euribor_rate(html, maturity_months=6, maturity_column=3)
 
 
-PARSERS: dict[str, Callable[[str], tuple[float | None, str | None, str]]] = {
+PARSERS: dict[str, Callable[[str], ParsedRate]] = {
     "cbr_key_rate": _parse_cbr_key_rate,
     "ruonia_rate": _parse_ruonia_rate,
     "ecb_key_rates": _parse_ecb_key_rates,
@@ -286,22 +404,44 @@ def scrape_source(source: SourceConfig) -> dict[str, str | float | None]:
 
     try:
         html = fetch_html(source.url)
-        rate, rate_date, details = parser(html)
-        status = "ok" if rate is not None else "no_rate_found"
-        error = None if rate is not None else "Процентная ставка не найдена на странице."
+        parsed = parser(html)
+        current_rate = parsed.current_rate
+        current_date = parsed.current_date
+        previous_rate = parsed.previous_rate
+        previous_date = parsed.previous_date
+
+        absolute_change = None
+        relative_change = None
+        if current_rate is not None and previous_rate is not None:
+            absolute_change = current_rate - previous_rate
+            if previous_rate != 0:
+                relative_change = (absolute_change / previous_rate) * 100
+
+        status = "ok" if current_rate is not None else "no_rate_found"
+        error = None if current_rate is not None else "Процентная ставка не найдена на странице."
     except Exception as exc:  # noqa: BLE001 - возвращаем ошибку в таблицу результата
-        rate = None
-        rate_date = None
+        current_rate = None
+        current_date = None
+        previous_rate = None
+        previous_date = None
+        absolute_change = None
+        relative_change = None
         details = "Ошибка при загрузке/разборе источника."
         status = "error"
         error = str(exc)
+    else:
+        details = parsed.details
 
     return {
         "source_name": source.name,
         "source_url": source.url,
         "parser": source.parser,
-        "rate_percent": rate,
-        "rate_date": rate_date,
+        "rate_percent": current_rate,
+        "rate_date": current_date,
+        "previous_rate_percent": previous_rate,
+        "previous_rate_date": previous_date,
+        "relative_change_percent": relative_change,
+        "absolute_change_percent": absolute_change,
         "status": status,
         "details": details,
         "error": error,
