@@ -11,6 +11,7 @@
 - Быстрое добавление расширенного списка источников кнопкой **Добавить новые источники**.
 - Поддержка нескольких стратегий парсинга:
   - `cbr_key_rate`
+  - `ruonia_rate` (для https://cbr.ru/hd_base/ruonia/)
   - `ecb_key_rates`
   - `boe_bank_rate`
   - `ester_rate` (для https://www.global-rates.com/en/interest-rates/ester/)

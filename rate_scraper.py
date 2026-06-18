@@ -117,6 +117,54 @@ def _parse_boe_bank_rate(html: str) -> tuple[float | None, str | None, str]:
     return _parse_generic_percentage(html)
 
 
+def _parse_ruonia_rate(html: str) -> tuple[float | None, str | None, str]:
+    soup = BeautifulSoup(html, "lxml")
+    table = soup.find("table")
+    if not table:
+        return _parse_generic_percentage(html)
+
+    rows: list[list[str]] = []
+    for row in table.find_all("tr"):
+        cells = [cell.get_text(" ", strip=True) for cell in row.find_all(("td", "th"))]
+        if cells:
+            rows.append(cells)
+
+    if not rows:
+        return _parse_generic_percentage(html)
+
+    date_row: list[str] | None = None
+    rate_row: list[str] | None = None
+
+    for row in rows:
+        label = row[0].lower()
+        if "дата ставки" in label:
+            date_row = row
+        if "ставка ruonia" in label:
+            rate_row = row
+
+    if not date_row or not rate_row:
+        return _parse_generic_percentage(html)
+
+    dates = []
+    for cell in date_row[1:]:
+        parsed_date = _extract_first_date(cell)
+        if parsed_date:
+            dates.append(parsed_date)
+
+    rates = []
+    for cell in rate_row[1:]:
+        match = re.search(r"-?\d+(?:[.,]\d+)?", cell)
+        if not match:
+            continue
+        rates.append(float(match.group(0).replace(",", ".")))
+
+    if not dates or not rates:
+        return _parse_generic_percentage(html)
+
+    last_index = min(len(dates), len(rates)) - 1
+    return rates[last_index], dates[last_index], "Ставка RUONIA ЦБ РФ (табличный парсер)."
+
+
 def _extract_first_global_rates_value(
     lines: list[str], date_pattern: re.Pattern[str]
 ) -> tuple[float | None, str | None]:
@@ -211,6 +259,7 @@ def _parse_euribor_6m_rate(html: str) -> tuple[float | None, str | None, str]:
 
 PARSERS: dict[str, Callable[[str], tuple[float | None, str | None, str]]] = {
     "cbr_key_rate": _parse_cbr_key_rate,
+    "ruonia_rate": _parse_ruonia_rate,
     "ecb_key_rates": _parse_ecb_key_rates,
     "boe_bank_rate": _parse_boe_bank_rate,
     "ester_rate": _parse_ester_rate,

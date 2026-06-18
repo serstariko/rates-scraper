@@ -33,6 +33,11 @@ DEFAULT_SOURCES = [
 
 RECOMMENDED_EXTRA_SOURCES = [
     {
+        "name": "RUONIA — ЦБ РФ",
+        "url": "https://cbr.ru/hd_base/ruonia/",
+        "parser": "ruonia_rate",
+    },
+    {
         "name": "ESTER — global-rates",
         "url": "https://www.global-rates.com/en/interest-rates/ester/",
         "parser": "ester_rate",
@@ -216,6 +221,7 @@ def main() -> None:
                 "Парсер",
                 options=[
                     "cbr_key_rate",
+                    "ruonia_rate",
                     "ecb_key_rates",
                     "boe_bank_rate",
                     "ester_rate",
