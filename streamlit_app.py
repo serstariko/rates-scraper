@@ -15,24 +15,6 @@ except ImportError:  # pragma: no cover - fallback для окружений б�
 
 DEFAULT_SOURCES = [
     {
-        "name": "ЦБ РФ — ключевая ставка",
-        "url": "https://www.cbr.ru/hd_base/keyrate/",
-        "parser": "cbr_key_rate",
-    },
-    {
-        "name": "ЕЦБ — ключевые ставки",
-        "url": "https://www.ecb.europa.eu/stats/policy_and_exchange_rates/key_ecb_interest_rates/html/index.en.html",
-        "parser": "ecb_key_rates",
-    },
-    {
-        "name": "Банк Англии — Bank Rate",
-        "url": "https://www.bankofengland.co.uk/boeapps/database/Bank-Rate.asp",
-        "parser": "boe_bank_rate",
-    },
-]
-
-RECOMMENDED_EXTRA_SOURCES = [
-    {
         "name": "RUONIA — ЦБ РФ",
         "url": "https://cbr.ru/hd_base/ruonia/",
         "parser": "ruonia_rate",
@@ -56,46 +38,6 @@ RECOMMENDED_EXTRA_SOURCES = [
         "name": "EURIBOR 6M — global-rates",
         "url": "https://www.global-rates.com/en/interest-rates/euribor/",
         "parser": "euribor_6m_rate",
-    },
-    {
-        "name": "ФРС США — Interest on Reserve Balances",
-        "url": "https://www.federalreserve.gov/monetarypolicy/openmarket.htm",
-        "parser": "generic",
-    },
-    {
-        "name": "Швейцарский НБ — SNB policy rate",
-        "url": "https://www.snb.ch/en/iabout/monpol/id/monpol",
-        "parser": "generic",
-    },
-    {
-        "name": "Банк Канады — Policy interest rate",
-        "url": "https://www.bankofcanada.ca/core-functions/monetary-policy/key-interest-rate/",
-        "parser": "generic",
-    },
-    {
-        "name": "РБА (Австралия) — Cash Rate Target",
-        "url": "https://www.rba.gov.au/statistics/cash-rate/",
-        "parser": "generic",
-    },
-    {
-        "name": "Резервный банк Новой Зеландии — Official Cash Rate",
-        "url": "https://www.rbnz.govt.nz/monetary-policy/official-cash-rate-decisions",
-        "parser": "generic",
-    },
-    {
-        "name": "Норвежский банк — Policy rate",
-        "url": "https://www.norges-bank.no/en/topics/Monetary-policy/Policy-rate/",
-        "parser": "generic",
-    },
-    {
-        "name": "Риксбанк (Швеция) — Policy rate",
-        "url": "https://www.riksbank.se/en-gb/statistics/search-interest--exchange-rates/repo-rate-historical-data/",
-        "parser": "generic",
-    },
-    {
-        "name": "Банк Японии — Basic Discount Rate",
-        "url": "https://www.boj.or.jp/en/statistics/boj/other/discount/index.htm/",
-        "parser": "generic",
     },
 ]
 
@@ -122,34 +64,6 @@ def _prepare_sources(raw_sources: pd.DataFrame) -> list[SourceConfig]:
     return cleaned
 
 
-def _append_missing_sources(
-    current_sources: pd.DataFrame, candidate_sources: list[dict[str, str]]
-) -> tuple[pd.DataFrame, int]:
-    if current_sources.empty:
-        current_sources = pd.DataFrame(columns=["name", "url", "parser"])
-
-    existing_keys = set()
-    for row in current_sources.to_dict("records"):
-        url = str(row.get("url", "")).strip().lower()
-        parser = str(row.get("parser", "generic")).strip().lower()
-        if url:
-            existing_keys.add((url, parser))
-
-    additions = []
-    for source in candidate_sources:
-        source_key = (source["url"].strip().lower(), source["parser"].strip().lower())
-        if source_key in existing_keys:
-            continue
-        additions.append(source)
-        existing_keys.add(source_key)
-
-    if not additions:
-        return current_sources, 0
-
-    updated = pd.concat([current_sources, pd.DataFrame(additions)], ignore_index=True)
-    return updated, len(additions)
-
-
 def _sources_signature(sources: list[SourceConfig]) -> tuple[tuple[str, str, str], ...]:
     return tuple((source.name, source.url, source.parser) for source in sources)
 
@@ -169,8 +83,9 @@ def main() -> None:
         "обновляются каждый час и по кнопке **Обновить сейчас**."
     )
 
-    if "sources" not in st.session_state:
+    if "sources_initialized" not in st.session_state:
         st.session_state.sources = pd.DataFrame(DEFAULT_SOURCES)
+        st.session_state.sources_initialized = True
     if "results" not in st.session_state:
         st.session_state.results = pd.DataFrame()
     if "last_refresh_at_utc" not in st.session_state:
@@ -191,24 +106,11 @@ def main() -> None:
             "Работает только ручное обновление."
         )
 
-    left, middle, right = st.columns([1, 1.3, 2.2])
+    left, right = st.columns([1, 3])
     with left:
         refresh_now = st.button("Обновить сейчас", type="primary", use_container_width=True)
-    with middle:
-        add_sources = st.button("Добавить новые источники", use_container_width=True)
     with right:
         st.caption("Для неизвестных сайтов используйте parser = generic.")
-
-    if add_sources:
-        updated_sources, added_count = _append_missing_sources(
-            st.session_state.sources, RECOMMENDED_EXTRA_SOURCES
-        )
-        st.session_state.sources = updated_sources
-        if added_count:
-            st.success(f"Добавлено источников: {added_count}")
-        else:
-            st.info("Все рекомендованные источники уже есть в таблице.")
-        st.rerun()
 
     source_editor = st.data_editor(
         st.session_state.sources,
