@@ -31,6 +31,49 @@ DEFAULT_SOURCES = [
     },
 ]
 
+RECOMMENDED_EXTRA_SOURCES = [
+    {
+        "name": "ФРС США — Interest on Reserve Balances",
+        "url": "https://www.federalreserve.gov/monetarypolicy/openmarket.htm",
+        "parser": "generic",
+    },
+    {
+        "name": "Швейцарский НБ — SNB policy rate",
+        "url": "https://www.snb.ch/en/iabout/monpol/id/monpol",
+        "parser": "generic",
+    },
+    {
+        "name": "Банк Канады — Policy interest rate",
+        "url": "https://www.bankofcanada.ca/core-functions/monetary-policy/key-interest-rate/",
+        "parser": "generic",
+    },
+    {
+        "name": "РБА (Австралия) — Cash Rate Target",
+        "url": "https://www.rba.gov.au/statistics/cash-rate/",
+        "parser": "generic",
+    },
+    {
+        "name": "Резервный банк Новой Зеландии — Official Cash Rate",
+        "url": "https://www.rbnz.govt.nz/monetary-policy/official-cash-rate-decisions",
+        "parser": "generic",
+    },
+    {
+        "name": "Норвежский банк — Policy rate",
+        "url": "https://www.norges-bank.no/en/topics/Monetary-policy/Policy-rate/",
+        "parser": "generic",
+    },
+    {
+        "name": "Риксбанк (Швеция) — Policy rate",
+        "url": "https://www.riksbank.se/en-gb/statistics/search-interest--exchange-rates/repo-rate-historical-data/",
+        "parser": "generic",
+    },
+    {
+        "name": "Банк Японии — Basic Discount Rate",
+        "url": "https://www.boj.or.jp/en/statistics/boj/other/discount/index.htm/",
+        "parser": "generic",
+    },
+]
+
 AUTO_REFRESH_MS = 60 * 60 * 1000
 
 
@@ -52,6 +95,30 @@ def _prepare_sources(raw_sources: pd.DataFrame) -> list[SourceConfig]:
             continue
         cleaned.append(SourceConfig(name=name, url=url, parser=parser))
     return cleaned
+
+
+def _append_missing_sources(
+    current_sources: pd.DataFrame, candidate_sources: list[dict[str, str]]
+) -> tuple[pd.DataFrame, int]:
+    if current_sources.empty:
+        current_sources = pd.DataFrame(columns=["name", "url", "parser"])
+
+    existing_urls = {
+        str(url).strip().lower() for url in current_sources.get("url", pd.Series(dtype=str)).tolist() if str(url).strip()
+    }
+    additions = []
+    for source in candidate_sources:
+        source_url = source["url"].strip().lower()
+        if source_url in existing_urls:
+            continue
+        additions.append(source)
+        existing_urls.add(source_url)
+
+    if not additions:
+        return current_sources, 0
+
+    updated = pd.concat([current_sources, pd.DataFrame(additions)], ignore_index=True)
+    return updated, len(additions)
 
 
 def _sources_signature(sources: list[SourceConfig]) -> tuple[tuple[str, str, str], ...]:
@@ -95,6 +162,25 @@ def main() -> None:
             "Работает только ручное обновление."
         )
 
+    left, middle, right = st.columns([1, 1.3, 2.2])
+    with left:
+        refresh_now = st.button("Обновить сейчас", type="primary", use_container_width=True)
+    with middle:
+        add_sources = st.button("Добавить новые источники", use_container_width=True)
+    with right:
+        st.caption("Для неизвестных сайтов используйте parser = generic.")
+
+    if add_sources:
+        updated_sources, added_count = _append_missing_sources(
+            st.session_state.sources, RECOMMENDED_EXTRA_SOURCES
+        )
+        st.session_state.sources = updated_sources
+        if added_count:
+            st.success(f"Добавлено источников: {added_count}")
+        else:
+            st.info("Все рекомендованные источники уже есть в таблице.")
+        st.rerun()
+
     source_editor = st.data_editor(
         st.session_state.sources,
         num_rows="dynamic",
@@ -115,12 +201,6 @@ def main() -> None:
     source_configs = _prepare_sources(source_editor)
     current_signature = _sources_signature(source_configs)
     previous_signature = st.session_state.sources_signature
-
-    left, right = st.columns([1, 3])
-    with left:
-        refresh_now = st.button("Обновить сейчас", type="primary", use_container_width=True)
-    with right:
-        st.caption("Для неизвестных сайтов используйте parser = generic.")
 
     refresh_reason: str | None = None
     if st.session_state.results.empty:
