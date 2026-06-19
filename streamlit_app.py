@@ -99,7 +99,8 @@ RECOMMENDED_EXTRA_SOURCES = [
     },
 ]
 
-AUTO_REFRESH_MS = 60 * 60 * 1000
+AUTO_REFRESH_MIN_OPTIONS = [5, 15, 30, 60, 120]
+DEFAULT_AUTO_REFRESH_MINUTES = 60
 
 
 def _to_excel_bytes(dataframe: pd.DataFrame) -> bytes:
@@ -181,11 +182,18 @@ def main() -> None:
         st.session_state.sources_signature = None
     if "last_auto_tick" not in st.session_state:
         st.session_state.last_auto_tick = 0
+    if "auto_refresh_enabled" not in st.session_state:
+        st.session_state.auto_refresh_enabled = True
+    if "auto_refresh_minutes" not in st.session_state:
+        st.session_state.auto_refresh_minutes = DEFAULT_AUTO_REFRESH_MINUTES
 
     auto_tick = 0
-    if st_autorefresh is not None:
-        auto_tick = st_autorefresh(interval=AUTO_REFRESH_MS, key="hourly_rates_refresh")
-    else:
+    if st.session_state.auto_refresh_enabled and st_autorefresh is not None:
+        auto_tick = st_autorefresh(
+            interval=st.session_state.auto_refresh_minutes * 60 * 1000,
+            key="rates_auto_refresh",
+        )
+    elif st.session_state.auto_refresh_enabled and st_autorefresh is None:
         st.warning(
             "Пакет streamlit-autorefresh не установлен: автообновление раз в час отключено. "
             "Работает только ручное обновление."
@@ -198,6 +206,14 @@ def main() -> None:
         add_sources = st.button("Добавить новые источники", use_container_width=True)
     with right:
         st.caption("Для неизвестных сайтов используйте parser = generic.")
+
+    with st.expander("Настройки автообновления", expanded=False):
+        st.checkbox("Включить автообновление", key="auto_refresh_enabled")
+        st.selectbox(
+            "Интервал обновления (минуты)",
+            options=AUTO_REFRESH_MIN_OPTIONS,
+            key="auto_refresh_minutes",
+        )
 
     if add_sources:
         updated_sources, added_count = _append_missing_sources(
@@ -246,8 +262,12 @@ def main() -> None:
         refresh_reason = "initial"
     elif refresh_now:
         refresh_reason = "manual"
-    elif st_autorefresh is not None and auto_tick != st.session_state.last_auto_tick:
-        refresh_reason = "hourly"
+    elif (
+        st.session_state.auto_refresh_enabled
+        and st_autorefresh is not None
+        and auto_tick != st.session_state.last_auto_tick
+    ):
+        refresh_reason = "auto"
     elif previous_signature is not None and current_signature != previous_signature:
         refresh_reason = "sources_changed"
 
@@ -266,7 +286,7 @@ def main() -> None:
         reason_labels = {
             "initial": "первичная загрузка",
             "manual": "ручное обновление",
-            "hourly": "автообновление (1 час)",
+            "auto": f"автообновление ({st.session_state.auto_refresh_minutes} мин.)",
             "sources_changed": "изменение списка источников",
         }
         refreshed_at = st.session_state.last_refresh_at_utc.strftime("%Y-%m-%d %H:%M:%S UTC")

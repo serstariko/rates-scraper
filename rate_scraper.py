@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 import re
@@ -8,10 +9,27 @@ from typing import Callable
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+RATE_PATTERN = re.compile(
+    r"(-?\d+(?:[.,]\d+)?)\s*(?:%|percent|per\s+cent|pct|процент(?:а|ов)?)",
+    flags=re.IGNORECASE,
+)
+NUMERIC_PATTERN = re.compile(r"-?\d+(?:[.,]\d+)?")
+RATE_HINT_KEYWORDS = (
+    "ставк",
+    "rate",
+    "interest",
+    "refinancing",
+    "ruonia",
+    "euribor",
+    "ester",
+    "policy",
 )
 
 
@@ -47,7 +65,7 @@ def _extract_first_date(text: str) -> str | None:
 
 def _extract_percentages(text: str, limit: int = 5) -> list[float]:
     values: list[float] = []
-    for match in re.finditer(r"(-?\d+(?:[.,]\d+)?)\s*%", text):
+    for match in RATE_PATTERN.finditer(text):
         normalized = match.group(1).replace(",", ".")
         try:
             values.append(float(normalized))
@@ -55,6 +73,30 @@ def _extract_percentages(text: str, limit: int = 5) -> list[float]:
             continue
         if len(values) >= limit:
             break
+    return values
+
+
+def _extract_rates_from_keyword_lines(lines: list[str], limit: int = 2) -> list[float]:
+    values: list[float] = []
+    seen: set[float] = set()
+    for line in lines:
+        lowered = line.lower()
+        if not any(keyword in lowered for keyword in RATE_HINT_KEYWORDS):
+            continue
+        for match in NUMERIC_PATTERN.finditer(line):
+            normalized = match.group(0).replace(",", ".")
+            try:
+                value = float(normalized)
+            except ValueError:
+                continue
+            if value < -10 or value > 100:
+                continue
+            if value in seen:
+                continue
+            seen.add(value)
+            values.append(value)
+            if len(values) >= limit:
+                return values
     return values
 
 
@@ -102,14 +144,21 @@ def _parse_generic_percentage(html: str) -> ParsedRate:
     previous_rate = pairs[1][0] if len(pairs) > 1 else None
     previous_date = pairs[1][1] if len(pairs) > 1 else None
 
+    details = "Найдено автоматически по первому процентному значению."
     if rate is None:
         percentages = _extract_percentages(text, limit=2)
         if percentages:
             rate = percentages[0]
         if len(percentages) > 1:
             previous_rate = percentages[1]
+    if rate is None:
+        keyword_rates = _extract_rates_from_keyword_lines(lines, limit=2)
+        if keyword_rates:
+            rate = keyword_rates[0]
+            details = "Найдено автоматически по строкам с ключевыми словами о ставках."
+        if len(keyword_rates) > 1:
+            previous_rate = keyword_rates[1]
 
-    details = "Найдено автоматически по первому процентному значению."
     return _build_parsed_rate(
         current_rate=rate,
         current_date=rate_date,
@@ -388,14 +437,38 @@ PARSERS: dict[str, Callable[[str], ParsedRate]] = {
 }
 
 
-def fetch_html(url: str, timeout: int = 25) -> str:
-    response = requests.get(
-        url,
-        timeout=timeout,
-        headers={"User-Agent": USER_AGENT, "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8"},
+def _build_http_session(retries: int = 3) -> requests.Session:
+    session = requests.Session()
+    retry_policy = Retry(
+        total=retries,
+        connect=retries,
+        read=retries,
+        status=retries,
+        backoff_factor=0.8,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET", "HEAD", "OPTIONS"}),
+        raise_on_status=False,
     )
-    response.raise_for_status()
-    return response.text
+    adapter = HTTPAdapter(max_retries=retry_policy)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+def fetch_html(url: str, timeout: int = 25) -> str:
+    session = _build_http_session()
+    try:
+        response = session.get(
+            url,
+            timeout=timeout,
+            headers={"User-Agent": USER_AGENT, "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8"},
+        )
+        response.raise_for_status()
+        if response.encoding is None or response.encoding.lower() == "iso-8859-1":
+            response.encoding = response.apparent_encoding
+        return response.text
+    finally:
+        session.close()
 
 
 def scrape_source(source: SourceConfig) -> dict[str, str | float | None]:
@@ -450,5 +523,40 @@ def scrape_source(source: SourceConfig) -> dict[str, str | float | None]:
 
 
 def scrape_all_sources(sources: list[SourceConfig]) -> pd.DataFrame:
-    rows = [scrape_source(source) for source in sources]
+    if not sources:
+        return pd.DataFrame()
+
+    rows: list[dict[str, str | float | None] | None] = [None] * len(sources)
+    max_workers = min(8, len(sources))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_to_index = {
+            pool.submit(scrape_source, source): index for index, source in enumerate(sources)
+        }
+        for future in as_completed(future_to_index):
+            index = future_to_index[future]
+            try:
+                rows[index] = future.result()
+            except Exception as exc:  # noqa: BLE001 - добавляем ошибку в итоговую таблицу
+                source = sources[index]
+                collected_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+                rows[index] = {
+                    "source_name": source.name,
+                    "source_url": source.url,
+                    "parser": source.parser,
+                    "rate_percent": None,
+                    "rate_date": None,
+                    "previous_rate_percent": None,
+                    "previous_rate_date": None,
+                    "relative_change_percent": None,
+                    "absolute_change_percent": None,
+                    "status": "error",
+                    "details": "Ошибка выполнения в пуле потоков.",
+                    "error": str(exc),
+                    "collected_at_utc": collected_at,
+                }
+
+    finalized_rows = [row for row in rows if row is not None]
+    if len(finalized_rows) != len(sources):
+        raise RuntimeError("Не удалось собрать результаты по всем источникам.")
+    rows = finalized_rows
     return pd.DataFrame(rows)
