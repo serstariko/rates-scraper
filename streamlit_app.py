@@ -165,12 +165,14 @@ def main() -> None:
     st.set_page_config(page_title="Парсер процентных ставок", layout="wide")
     st.title("Парсер процентных ставок с выгрузкой в Excel")
     st.write(
-        "Добавьте сайты-источники ставок: данные загружаются автоматически при открытии страницы, "
-        "обновляются каждый час и по кнопке **Обновить сейчас**."
+        "Рекомендованные сайты-источники загружаются автоматически при открытии страницы. "
+        "Данные обновляются каждый час и по кнопке **Обновить сейчас**."
     )
 
     if "sources" not in st.session_state:
-        st.session_state.sources = pd.DataFrame(DEFAULT_SOURCES)
+        initial_sources = pd.DataFrame(DEFAULT_SOURCES)
+        initial_sources, _ = _append_missing_sources(initial_sources, RECOMMENDED_EXTRA_SOURCES)
+        st.session_state.sources = initial_sources
     if "results" not in st.session_state:
         st.session_state.results = pd.DataFrame()
     if "last_refresh_at_utc" not in st.session_state:
@@ -191,24 +193,11 @@ def main() -> None:
             "Работает только ручное обновление."
         )
 
-    left, middle, right = st.columns([1, 1.3, 2.2])
+    left, right = st.columns([1, 2.5])
     with left:
         refresh_now = st.button("Обновить сейчас", type="primary", use_container_width=True)
-    with middle:
-        add_sources = st.button("Добавить новые источники", use_container_width=True)
     with right:
         st.caption("Для неизвестных сайтов используйте parser = generic.")
-
-    if add_sources:
-        updated_sources, added_count = _append_missing_sources(
-            st.session_state.sources, RECOMMENDED_EXTRA_SOURCES
-        )
-        st.session_state.sources = updated_sources
-        if added_count:
-            st.success(f"Добавлено источников: {added_count}")
-        else:
-            st.info("Все рекомендованные источники уже есть в таблице.")
-        st.rerun()
 
     source_editor = st.data_editor(
         st.session_state.sources,
