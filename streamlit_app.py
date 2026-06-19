@@ -52,20 +52,8 @@ def _to_excel_bytes(dataframe: pd.DataFrame) -> bytes:
     return output.read()
 
 
-def _prepare_sources(raw_sources: pd.DataFrame) -> list[SourceConfig]:
-    cleaned = []
-    for row in raw_sources.to_dict("records"):
-        name = str(row.get("name", "")).strip()
-        url = str(row.get("url", "")).strip()
-        parser = str(row.get("parser", "generic")).strip()
-        if not name or not url:
-            continue
-        cleaned.append(SourceConfig(name=name, url=url, parser=parser))
-    return cleaned
-
-
-def _sources_signature(sources: list[SourceConfig]) -> tuple[tuple[str, str, str], ...]:
-    return tuple((source.name, source.url, source.parser) for source in sources)
+def _fixed_source_configs() -> list[SourceConfig]:
+    return [SourceConfig(name=row["name"], url=row["url"], parser=row["parser"]) for row in DEFAULT_SOURCES]
 
 
 def _refresh_results(source_configs: list[SourceConfig], reason: str) -> None:
@@ -79,21 +67,16 @@ def main() -> None:
     st.set_page_config(page_title="Парсер процентных ставок", layout="wide")
     st.title("Парсер процентных ставок с выгрузкой в Excel")
     st.write(
-        "Добавьте сайты-источники ставок: данные загружаются автоматически при открытии страницы, "
-        "обновляются каждый час и по кнопке **Обновить сейчас**."
+        "Используется фиксированный список источников: RUONIA, ESTER и EURIBOR 1M/3M/6M. "
+        "Данные загружаются автоматически при открытии страницы, обновляются каждый час и по кнопке **Обновить сейчас**."
     )
 
-    if "sources_initialized" not in st.session_state:
-        st.session_state.sources = pd.DataFrame(DEFAULT_SOURCES)
-        st.session_state.sources_initialized = True
     if "results" not in st.session_state:
         st.session_state.results = pd.DataFrame()
     if "last_refresh_at_utc" not in st.session_state:
         st.session_state.last_refresh_at_utc = None
     if "last_refresh_reason" not in st.session_state:
         st.session_state.last_refresh_reason = None
-    if "sources_signature" not in st.session_state:
-        st.session_state.sources_signature = None
     if "last_auto_tick" not in st.session_state:
         st.session_state.last_auto_tick = 0
 
@@ -110,38 +93,12 @@ def main() -> None:
     with left:
         refresh_now = st.button("Обновить сейчас", type="primary", use_container_width=True)
     with right:
-        st.caption("Для неизвестных сайтов используйте parser = generic.")
+        st.caption("Список источников зафиксирован по вашему запросу.")
 
-    source_editor = st.data_editor(
-        st.session_state.sources,
-        num_rows="dynamic",
-        use_container_width=True,
-        column_config={
-            "name": st.column_config.TextColumn("Название источника", required=True),
-            "url": st.column_config.TextColumn("URL", required=True),
-            "parser": st.column_config.SelectboxColumn(
-                "Парсер",
-                options=[
-                    "cbr_key_rate",
-                    "ruonia_rate",
-                    "ecb_key_rates",
-                    "boe_bank_rate",
-                    "ester_rate",
-                    "euribor_1m_rate",
-                    "euribor_3m_rate",
-                    "euribor_6m_rate",
-                    "generic",
-                ],
-                required=True,
-            ),
-        },
-        key="sources_editor",
-    )
+    st.subheader("Используемые источники")
+    st.dataframe(pd.DataFrame(DEFAULT_SOURCES), use_container_width=True, hide_index=True)
 
-    st.session_state.sources = source_editor
-    source_configs = _prepare_sources(source_editor)
-    current_signature = _sources_signature(source_configs)
-    previous_signature = st.session_state.sources_signature
+    source_configs = _fixed_source_configs()
 
     refresh_reason: str | None = None
     if st.session_state.results.empty:
@@ -150,18 +107,11 @@ def main() -> None:
         refresh_reason = "manual"
     elif st_autorefresh is not None and auto_tick != st.session_state.last_auto_tick:
         refresh_reason = "hourly"
-    elif previous_signature is not None and current_signature != previous_signature:
-        refresh_reason = "sources_changed"
 
     if refresh_reason:
-        if not source_configs:
-            st.session_state.results = pd.DataFrame()
-            st.warning("Добавьте хотя бы один валидный источник.")
-        else:
-            _refresh_results(source_configs, refresh_reason)
-            st.success(f"Собрано источников: {len(st.session_state.results)}")
+        _refresh_results(source_configs, refresh_reason)
+        st.success(f"Собрано источников: {len(st.session_state.results)}")
 
-    st.session_state.sources_signature = current_signature
     st.session_state.last_auto_tick = auto_tick
 
     if st.session_state.last_refresh_at_utc is not None:
@@ -169,7 +119,6 @@ def main() -> None:
             "initial": "первичная загрузка",
             "manual": "ручное обновление",
             "hourly": "автообновление (1 час)",
-            "sources_changed": "изменение списка источников",
         }
         refreshed_at = st.session_state.last_refresh_at_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
         refresh_label = reason_labels.get(st.session_state.last_refresh_reason, "обновление")

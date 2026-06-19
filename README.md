@@ -4,21 +4,16 @@
 
 ## Возможности
 
-- Добавление/редактирование списка источников прямо в UI.
+- Фиксированный список источников по запросу: RUONIA, ESTER, EURIBOR 1M/3M/6M.
 - Автоматическая загрузка данных при открытии страницы.
 - Автообновление данных каждый час.
 - Ручное обновление кнопкой **Обновить сейчас**.
-- В стартовом списке сразу отображаются источники, которые были запрошены: RUONIA, ESTER, EURIBOR 1M/3M/6M.
-- Поддержка нескольких стратегий парсинга:
-  - `cbr_key_rate`
+- Поддержка стратегий парсинга для выбранных источников:
   - `ruonia_rate` (для https://cbr.ru/hd_base/ruonia/)
-  - `ecb_key_rates`
-  - `boe_bank_rate`
   - `ester_rate` (для https://www.global-rates.com/en/interest-rates/ester/)
   - `euribor_1m_rate` (для https://www.global-rates.com/en/interest-rates/euribor/)
   - `euribor_3m_rate` (для https://www.global-rates.com/en/interest-rates/euribor/)
   - `euribor_6m_rate` (для https://www.global-rates.com/en/interest-rates/euribor/)
-  - `generic` (универсальный режим)
 - Выгрузка итоговой таблицы в файл `interest_rates.xlsx`.
 
 ## Запуск
