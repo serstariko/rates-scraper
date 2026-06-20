@@ -7,6 +7,7 @@ import re
 from typing import Callable
 import csv
 from io import StringIO
+from pathlib import Path
 
 import pandas as pd
 import requests
@@ -33,10 +34,19 @@ NFEASWAP_TENOR_PARSERS = {
     "nfeaswap_9m_rate": "9M",
     "nfeaswap_1y_rate": "1Y",
 }
+CME_SOFR_SWAP_TENOR_PARSERS = {
+    "cme_sofr_swap_1y_rate": "1 Year",
+    "cme_sofr_swap_2y_rate": "2 Year",
+    "cme_sofr_swap_3y_rate": "3 Year",
+    "cme_sofr_swap_5y_rate": "5 Year",
+    "cme_sofr_swap_10y_rate": "10 Year",
+}
 SOFR_MARKETS_API_URL = (
     "https://markets.newyorkfed.org/read"
     "?productCode=50&eventCodes=520&startPosition=0&limit=5"
 )
+CME_BLOCK_MESSAGE_FRAGMENT = "This IP address is blocked due to suspected web scraping activity"
+CME_SOFR_CACHE_PATH = Path(__file__).resolve().parent / ".cme_sofr_swaps_cache.json"
 
 
 @dataclass(slots=True)
@@ -589,6 +599,149 @@ def _parse_nfeaswap_tenor(tenor: str) -> ParsedRate:
     )
 
 
+def _cme_proxy_url(url: str) -> str:
+    normalized = url
+    if normalized.startswith("https://"):
+        normalized = normalized[len("https://") :]
+    elif normalized.startswith("http://"):
+        normalized = normalized[len("http://") :]
+    return f"https://r.jina.ai/http://{normalized}"
+
+
+def _normalize_cme_trade_date(raw_date: str | None) -> str | None:
+    if raw_date is None:
+        return None
+    cleaned = raw_date.strip()
+    if not cleaned:
+        return None
+    try:
+        parsed = datetime.strptime(cleaned, "%d %b %Y")
+    except ValueError:
+        return None
+    return parsed.strftime("%Y-%m-%d")
+
+
+def _clean_cme_rate_text(value: str) -> str:
+    return value.replace(" ", "").replace(",", ".").strip()
+
+
+def _extract_cme_sofr_rows(page_text: str) -> dict[str, float]:
+    rows: dict[str, float] = {}
+
+    for line in page_text.splitlines():
+        row_match = re.match(
+            r"^\|\s*(\d+\s+Year)\s*\|\s*([0-9.,\s-]+)\s*\|\s*([0-9.,\s-]+)\s*\|$",
+            line.strip(),
+        )
+        if not row_match:
+            continue
+        tenor = row_match.group(1)
+        rate_text = _clean_cme_rate_text(row_match.group(2))
+        try:
+            rows[tenor] = float(rate_text)
+        except ValueError:
+            continue
+
+    if rows:
+        return rows
+
+    soup = BeautifulSoup(page_text, "lxml")
+    for row in soup.find_all("tr"):
+        cells = [cell.get_text(" ", strip=True) for cell in row.find_all(("td", "th"))]
+        if len(cells) < 2:
+            continue
+        tenor_text = cells[0]
+        if not re.fullmatch(r"\d+\s+Year", tenor_text):
+            continue
+        rate_text = _clean_cme_rate_text(cells[1])
+        try:
+            rows[tenor_text] = float(rate_text)
+        except ValueError:
+            continue
+    return rows
+
+
+def _extract_cme_trade_date(page_text: str) -> str | None:
+    markdown_match = re.search(r"Trade Date:\s*([^\n]+)", page_text)
+    if markdown_match:
+        normalized = _normalize_cme_trade_date(markdown_match.group(1))
+        if normalized:
+            return normalized
+
+    soup = BeautifulSoup(page_text, "lxml")
+    body_text = soup.get_text("\n", strip=True)
+    html_match = re.search(r"Trade Date:\s*([^\n]+)", body_text)
+    if html_match:
+        return _normalize_cme_trade_date(html_match.group(1))
+    return None
+
+
+def _load_cme_sofr_cache() -> dict[str, dict[str, str | float]]:
+    try:
+        cache_text = CME_SOFR_CACHE_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except OSError:
+        return {}
+    try:
+        parsed = json.loads(cache_text)
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(parsed, dict):
+        return parsed
+    return {}
+
+
+def _save_cme_sofr_cache(cache: dict[str, dict[str, str | float]]) -> None:
+    try:
+        CME_SOFR_CACHE_PATH.write_text(
+            json.dumps(cache, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    except OSError:
+        return
+
+
+def _parse_cme_sofr_swap_tenor(tenor: str, source_url: str) -> ParsedRate:
+    try:
+        page_text = fetch_html(source_url)
+    except Exception:  # noqa: BLE001 - fallback на прокси при блокировке/ошибках CME
+        page_text = fetch_html(_cme_proxy_url(source_url))
+
+    if CME_BLOCK_MESSAGE_FRAGMENT in page_text or page_text.strip().startswith('{"message":'):
+        page_text = fetch_html(_cme_proxy_url(source_url))
+
+    trade_date = _extract_cme_trade_date(page_text)
+    rates_by_tenor = _extract_cme_sofr_rows(page_text)
+    current_rate = rates_by_tenor.get(tenor)
+
+    cache = _load_cme_sofr_cache()
+    cached_tenor = cache.get(tenor, {})
+    previous_rate = _to_float(cached_tenor.get("current_rate"))
+    previous_date_value = cached_tenor.get("current_date")
+    previous_date = previous_date_value if isinstance(previous_date_value, str) else None
+
+    if current_rate is not None and trade_date is not None:
+        cache[tenor] = {
+            "current_rate": current_rate,
+            "current_date": trade_date,
+            "previous_rate": previous_rate,
+            "previous_date": previous_date,
+        }
+        _save_cme_sofr_cache(cache)
+
+    return _build_parsed_rate(
+        current_rate=current_rate,
+        current_date=trade_date,
+        previous_rate=previous_rate,
+        previous_date=previous_date,
+        details=(
+            f"CME Cleared SOFR Swaps ({tenor}) через страницу SOFR OIS Curve; "
+            "предыдущее значение берётся из предыдущего успешного опроса."
+        ),
+    )
+
+
 PARSERS: dict[str, Callable[[str], ParsedRate]] = {
     "cbr_key_rate": _parse_cbr_key_rate,
     "ruonia_rate": _parse_ruonia_rate,
@@ -639,6 +792,8 @@ def scrape_source(source: SourceConfig) -> dict[str, str | float | None]:
             parsed = _parse_moex_iss_rate(MOEX_ISS_INDEX_SECIDS[source.parser])
         elif source.parser in NFEASWAP_TENOR_PARSERS:
             parsed = _parse_nfeaswap_tenor(NFEASWAP_TENOR_PARSERS[source.parser])
+        elif source.parser in CME_SOFR_SWAP_TENOR_PARSERS:
+            parsed = _parse_cme_sofr_swap_tenor(CME_SOFR_SWAP_TENOR_PARSERS[source.parser], source.url)
         elif source.parser == "sofr_rate":
             parsed = _parse_sofr_rate()
         else:

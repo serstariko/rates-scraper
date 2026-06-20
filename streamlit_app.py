@@ -45,6 +45,31 @@ DEFAULT_SOURCES = [
         "parser": "sofr_rate",
     },
     {
+        "name": "CME SOFR OIS — 1Y",
+        "url": "https://www.cmegroup.com/trading/interest-rates/cleared-otc-sofr-swaps.html",
+        "parser": "cme_sofr_swap_1y_rate",
+    },
+    {
+        "name": "CME SOFR OIS — 2Y",
+        "url": "https://www.cmegroup.com/trading/interest-rates/cleared-otc-sofr-swaps.html",
+        "parser": "cme_sofr_swap_2y_rate",
+    },
+    {
+        "name": "CME SOFR OIS — 3Y",
+        "url": "https://www.cmegroup.com/trading/interest-rates/cleared-otc-sofr-swaps.html",
+        "parser": "cme_sofr_swap_3y_rate",
+    },
+    {
+        "name": "CME SOFR OIS — 5Y",
+        "url": "https://www.cmegroup.com/trading/interest-rates/cleared-otc-sofr-swaps.html",
+        "parser": "cme_sofr_swap_5y_rate",
+    },
+    {
+        "name": "CME SOFR OIS — 10Y",
+        "url": "https://www.cmegroup.com/trading/interest-rates/cleared-otc-sofr-swaps.html",
+        "parser": "cme_sofr_swap_10y_rate",
+    },
+    {
         "name": "NFEASWAP — 1W",
         "url": "https://nfeaswap.ru/",
         "parser": "nfeaswap_1w_rate",
@@ -133,7 +158,7 @@ def main() -> None:
     st.title("Парсер процентных ставок с выгрузкой в Excel")
     st.write(
         "Используется фиксированный список источников: ключевая ставка ЦБ РФ, RUONIA, "
-        "RUSFAR, RUSFAR3M, RUSFARCNY, SOFR, "
+        "RUSFAR, RUSFAR3M, RUSFARCNY, SOFR, CME SOFR OIS (1Y/2Y/3Y/5Y/10Y), "
         "NFEASWAP (1W-1Y), "
         "ESTER и EURIBOR 1M/3M/6M. "
         "Данные загружаются автоматически при открытии страницы, обновляются каждый час и по кнопке **Обновить сейчас**."
