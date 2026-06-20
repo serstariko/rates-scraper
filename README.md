@@ -4,7 +4,7 @@
 
 ## Возможности
 
-- Фиксированный список источников по запросу: ключевая ставка ЦБ РФ, RUONIA, RUSFAR, RUSFAR3M, RUSFARCNY, SOFR, CME SOFR OIS (1Y-10Y, расчётные 4Y/6Y/7Y/8Y/9Y по линейной интерполяции), NFEASWAP (1W-1Y), ESTER, EURIBOR 1M/3M/6M.
+- Фиксированный список источников по запросу: ключевая ставка ЦБ РФ, RUONIA, FR007, RUSFAR, RUSFAR3M, RUSFARCNY, SOFR, CME SOFR OIS (1Y-10Y, расчётные 4Y/6Y/7Y/8Y/9Y по линейной интерполяции), NFEASWAP (1W-1Y), ESTER, EURIBOR 1M/3M/6M.
 - Автоматическая загрузка данных при открытии страницы.
 - Автообновление данных каждый час.
 - Ручное обновление кнопкой **Обновить сейчас**.
@@ -12,6 +12,7 @@
 - Поддержка стратегий парсинга для выбранных источников:
   - `cbr_key_rate` (для https://cbr.ru/hd_base/KeyRate/)
   - `ruonia_rate` (для https://cbr.ru/hd_base/ruonia/)
+  - `fr007_rate` (для https://www.chinamoney.com.cn/english/bmkfrr/)
   - `rusfar_rate` (MOEX ISS: индекс RUSFAR, поле `CURRENTVALUE`)
   - `rusfar3m_rate` (MOEX ISS: индекс RUSFAR3M, поле `CURRENTVALUE`)
   - `rusfarcny_rate` (MOEX ISS: индекс RUSFARCNY, поле `CURRENTVALUE`)

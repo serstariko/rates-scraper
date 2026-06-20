@@ -25,6 +25,11 @@ DEFAULT_SOURCES = [
         "parser": "ruonia_rate",
     },
     {
+        "name": "ChinaMoney — FR007",
+        "url": "https://www.chinamoney.com.cn/english/bmkfrr/",
+        "parser": "fr007_rate",
+    },
+    {
         "name": "MOEX — RUSFAR (CURRENTVALUE)",
         "url": "https://iss.moex.com/iss/engines/stock/markets/index/securities/RUSFAR.json",
         "parser": "rusfar_rate",
@@ -232,7 +237,7 @@ def main() -> None:
     st.set_page_config(page_title="Парсер процентных ставок", layout="wide")
     st.title("Парсер процентных ставок с выгрузкой в Excel")
     st.write(
-        "Используется фиксированный список источников: ключевая ставка ЦБ РФ, RUONIA, "
+        "Используется фиксированный список источников: ключевая ставка ЦБ РФ, RUONIA, FR007, "
         "RUSFAR, RUSFAR3M, RUSFARCNY, SOFR, CME SOFR OIS (1Y-10Y, с интерполяцией 4Y/6Y/7Y/8Y/9Y), "
         "NFEASWAP (1W-1Y), "
         "ESTER и EURIBOR 1M/3M/6M. "

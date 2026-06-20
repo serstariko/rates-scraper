@@ -52,6 +52,8 @@ SOFR_MARKETS_API_URL = (
     "https://markets.newyorkfed.org/read"
     "?productCode=50&eventCodes=520&startPosition=0&limit=5"
 )
+CHINAMONEY_FRR_JSON_URL = "https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/frr.json"
+CHINAMONEY_FRR_HISTORY_CSV_URL = "https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/frr-chrt.csv"
 CME_BLOCK_MESSAGE_FRAGMENT = "This IP address is blocked due to suspected web scraping activity"
 CME_SOFR_CACHE_PATH = Path(__file__).resolve().parent / ".cme_sofr_swaps_cache.json"
 
@@ -562,6 +564,52 @@ def _parse_sofr_rate() -> ParsedRate:
     )
 
 
+def _parse_fr007_rate() -> ParsedRate:
+    csv_text = fetch_html(CHINAMONEY_FRR_HISTORY_CSV_URL)
+    reader = csv.reader(StringIO(csv_text))
+
+    history_points: list[tuple[str, float]] = []
+    for row in reader:
+        if not row:
+            continue
+        date_value = row[0].strip()
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_value):
+            continue
+        if len(row) <= 7:
+            continue
+
+        rate_value = _to_float(row[7].strip())
+        if rate_value is None:
+            continue
+        history_points.append((date_value, rate_value))
+        if len(history_points) >= 3:
+            break
+
+    current_rate = history_points[0][1] if history_points else None
+    current_date = history_points[0][0] if history_points else None
+    previous_rate = history_points[1][1] if len(history_points) > 1 else None
+    previous_date = history_points[1][0] if len(history_points) > 1 else None
+
+    if current_rate is None:
+        json_payload = json.loads(fetch_html(CHINAMONEY_FRR_JSON_URL))
+        for record in json_payload.get("records", []):
+            if record.get("productCode") != "FR007":
+                continue
+            current_rate = _to_float(record.get("value"))
+            produce_date = record.get("produceDate")
+            if isinstance(produce_date, str):
+                current_date = produce_date
+            break
+
+    return _build_parsed_rate(
+        current_rate=current_rate,
+        current_date=current_date,
+        previous_rate=previous_rate,
+        previous_date=previous_date,
+        details="ChinaMoney FR007 (frr-chrt.csv, fallback: frr.json).",
+    )
+
+
 def _build_nfeaswap_archive_csv_url(days_back: int = 45) -> str:
     date_to = datetime.utcnow().date()
     date_from = date_to - timedelta(days=days_back)
@@ -935,6 +983,8 @@ def scrape_source(source: SourceConfig) -> dict[str, str | float | None]:
             )
         elif source.parser == "sofr_rate":
             parsed = _parse_sofr_rate()
+        elif source.parser == "fr007_rate":
+            parsed = _parse_fr007_rate()
         else:
             html = fetch_html(source.url)
             parsed = parser(html)
