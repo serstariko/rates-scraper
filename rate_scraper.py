@@ -90,7 +90,9 @@ def _format_date_ddmmyyyy(value: str | None) -> str | None:
         "%d.%m.%Y",
         "%Y-%m-%d",
         "%d-%m-%Y",
+        "%m-%d-%Y",
         "%d/%m/%Y",
+        "%m/%d/%Y",
         "%Y/%m/%d",
         "%d %b %Y",
     )
