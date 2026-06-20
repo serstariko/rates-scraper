@@ -257,14 +257,7 @@ def main() -> None:
             "Работает только ручное обновление."
         )
 
-    left, right = st.columns([1, 3])
-    with left:
-        refresh_now = st.button("Обновить сейчас", type="primary", use_container_width=True)
-    with right:
-        st.caption("Список источников зафиксирован по вашему запросу.")
-
-    st.subheader("Используемые источники")
-    st.dataframe(pd.DataFrame(DEFAULT_SOURCES), use_container_width=True, hide_index=True)
+    refresh_now = st.button("Обновить сейчас", type="primary", use_container_width=True)
 
     source_configs = _fixed_source_configs()
 
