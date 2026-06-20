@@ -21,6 +21,10 @@ MOEX_ISS_INDEX_SECIDS = {
     "rusfar3m_rate": "RUSFAR3M",
     "rusfarcny_rate": "RUSFARCNY",
 }
+SOFR_MARKETS_API_URL = (
+    "https://markets.newyorkfed.org/read"
+    "?productCode=50&eventCodes=520&startPosition=0&limit=5"
+)
 
 
 @dataclass(slots=True)
@@ -460,6 +464,49 @@ def _parse_moex_iss_rate(secid: str) -> ParsedRate:
     )
 
 
+def _parse_sofr_rate() -> ParsedRate:
+    payload = json.loads(fetch_html(SOFR_MARKETS_API_URL))
+    rows = payload.get("data", [])
+
+    points: list[tuple[str, float]] = []
+    for row in rows:
+        if row.get("eventDescription") != "SOFR":
+            continue
+
+        raw_data = row.get("data")
+        if isinstance(raw_data, str):
+            try:
+                parsed_data = json.loads(raw_data)
+            except json.JSONDecodeError:
+                continue
+        elif isinstance(raw_data, dict):
+            parsed_data = raw_data
+        else:
+            continue
+
+        rate = _to_float(parsed_data.get("dailyRate"))
+        rate_date = parsed_data.get("refRateDt") or row.get("postDt")
+        if rate is None or not isinstance(rate_date, str):
+            continue
+
+        points.append((rate_date, rate))
+        if len(points) >= 2:
+            break
+
+    current_rate = points[0][1] if points else None
+    current_date = points[0][0] if points else None
+    previous_rate = points[1][1] if len(points) > 1 else None
+    previous_date = points[1][0] if len(points) > 1 else None
+
+    return _build_parsed_rate(
+        current_rate=current_rate,
+        current_date=current_date,
+        previous_rate=previous_rate,
+        previous_date=previous_date,
+        details="NY Fed Markets API: SOFR dailyRate.",
+    )
+
+
 PARSERS: dict[str, Callable[[str], ParsedRate]] = {
     "cbr_key_rate": _parse_cbr_key_rate,
     "ruonia_rate": _parse_ruonia_rate,
@@ -508,6 +555,8 @@ def scrape_source(source: SourceConfig) -> dict[str, str | float | None]:
     try:
         if source.parser in MOEX_ISS_INDEX_SECIDS:
             parsed = _parse_moex_iss_rate(MOEX_ISS_INDEX_SECIDS[source.parser])
+        elif source.parser == "sofr_rate":
+            parsed = _parse_sofr_rate()
         else:
             html = fetch_html(source.url)
             parsed = parser(html)

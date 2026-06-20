@@ -35,6 +35,11 @@ DEFAULT_SOURCES = [
         "parser": "rusfarcny_rate",
     },
     {
+        "name": "NY Fed — SOFR",
+        "url": "https://www.newyorkfed.org/markets/reference-rates/sofr",
+        "parser": "sofr_rate",
+    },
+    {
         "name": "ESTER — global-rates",
         "url": "https://www.global-rates.com/en/interest-rates/ester/",
         "parser": "ester_rate",
@@ -82,7 +87,7 @@ def main() -> None:
     st.set_page_config(page_title="Парсер процентных ставок", layout="wide")
     st.title("Парсер процентных ставок с выгрузкой в Excel")
     st.write(
-        "Используется фиксированный список источников: RUONIA, RUSFAR, RUSFAR3M, RUSFARCNY, "
+        "Используется фиксированный список источников: RUONIA, RUSFAR, RUSFAR3M, RUSFARCNY, SOFR, "
         "ESTER и EURIBOR 1M/3M/6M. "
         "Данные загружаются автоматически при открытии страницы, обновляются каждый час и по кнопке **Обновить сейчас**."
     )

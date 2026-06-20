@@ -4,7 +4,7 @@
 
 ## Возможности
 
-- Фиксированный список источников по запросу: RUONIA, RUSFAR, RUSFAR3M, RUSFARCNY, ESTER, EURIBOR 1M/3M/6M.
+- Фиксированный список источников по запросу: RUONIA, RUSFAR, RUSFAR3M, RUSFARCNY, SOFR, ESTER, EURIBOR 1M/3M/6M.
 - Автоматическая загрузка данных при открытии страницы.
 - Автообновление данных каждый час.
 - Ручное обновление кнопкой **Обновить сейчас**.
@@ -13,6 +13,7 @@
   - `rusfar_rate` (MOEX ISS: индекс RUSFAR, поле `CURRENTVALUE`)
   - `rusfar3m_rate` (MOEX ISS: индекс RUSFAR3M, поле `CURRENTVALUE`)
   - `rusfarcny_rate` (MOEX ISS: индекс RUSFARCNY, поле `CURRENTVALUE`)
+  - `sofr_rate` (NY Fed Markets API: SOFR, поле `dailyRate`)
   - `ester_rate` (для https://www.global-rates.com/en/interest-rates/ester/)
   - `euribor_1m_rate` (для https://www.global-rates.com/en/interest-rates/euribor/)
   - `euribor_3m_rate` (для https://www.global-rates.com/en/interest-rates/euribor/)
