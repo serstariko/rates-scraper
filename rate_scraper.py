@@ -79,6 +79,30 @@ def _extract_first_date(text: str) -> str | None:
     return None
 
 
+def _format_date_ddmmyyyy(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+
+    known_formats = (
+        "%d.%m.%Y",
+        "%Y-%m-%d",
+        "%d-%m-%Y",
+        "%d/%m/%Y",
+        "%Y/%m/%d",
+        "%d %b %Y",
+    )
+    for date_format in known_formats:
+        try:
+            parsed = datetime.strptime(cleaned, date_format)
+            return parsed.strftime("%d.%m.%Y")
+        except ValueError:
+            continue
+    return cleaned
+
+
 def _extract_percentages(text: str, limit: int = 5) -> list[float]:
     values: list[float] = []
     for match in re.finditer(r"(-?\d+(?:[.,]\d+)?)\s*%", text):
@@ -800,9 +824,9 @@ def scrape_source(source: SourceConfig) -> dict[str, str | float | None]:
             html = fetch_html(source.url)
             parsed = parser(html)
         current_rate = parsed.current_rate
-        current_date = parsed.current_date
+        current_date = _format_date_ddmmyyyy(parsed.current_date)
         previous_rate = parsed.previous_rate
-        previous_date = parsed.previous_date
+        previous_date = _format_date_ddmmyyyy(parsed.previous_date)
 
         absolute_change = None
         relative_change = None
