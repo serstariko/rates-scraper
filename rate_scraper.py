@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import re
 from typing import Callable
+import csv
+from io import StringIO
 
 import pandas as pd
 import requests
@@ -20,6 +22,16 @@ MOEX_ISS_INDEX_SECIDS = {
     "rusfar_rate": "RUSFAR",
     "rusfar3m_rate": "RUSFAR3M",
     "rusfarcny_rate": "RUSFARCNY",
+}
+NFEASWAP_TENOR_PARSERS = {
+    "nfeaswap_1w_rate": "1W",
+    "nfeaswap_2w_rate": "2W",
+    "nfeaswap_1m_rate": "1M",
+    "nfeaswap_2m_rate": "2M",
+    "nfeaswap_3m_rate": "3M",
+    "nfeaswap_6m_rate": "6M",
+    "nfeaswap_9m_rate": "9M",
+    "nfeaswap_1y_rate": "1Y",
 }
 SOFR_MARKETS_API_URL = (
     "https://markets.newyorkfed.org/read"
@@ -507,6 +519,76 @@ def _parse_sofr_rate() -> ParsedRate:
     )
 
 
+def _build_nfeaswap_archive_csv_url(days_back: int = 45) -> str:
+    date_to = datetime.utcnow().date()
+    date_from = date_to - timedelta(days=days_back)
+    return (
+        "https://nfeaswap.ru/archive"
+        f"?date_from={date_from.strftime('%d-%m-%Y')}"
+        f"&date_to={date_to.strftime('%d-%m-%Y')}"
+        "&format=csv"
+    )
+
+
+def _normalize_nfeaswap_date(value: str) -> str | None:
+    cleaned = value.strip().strip('"')
+    try:
+        parsed = datetime.strptime(cleaned, "%d-%m-%Y")
+    except ValueError:
+        return None
+    return parsed.strftime("%Y-%m-%d")
+
+
+def _parse_nfeaswap_tenor(tenor: str) -> ParsedRate:
+    csv_text = fetch_html(_build_nfeaswap_archive_csv_url())
+    reader = csv.reader(StringIO(csv_text), delimiter=";", quotechar='"')
+    rows = [row for row in reader if row]
+    if len(rows) < 3:
+        return _build_parsed_rate(
+            current_rate=None,
+            current_date=None,
+            previous_rate=None,
+            previous_date=None,
+            details=f"NFEASWAP архив CSV: недостаточно данных для {tenor}.",
+        )
+
+    header = [cell.strip().strip('"').upper() for cell in rows[1]]
+    if tenor not in header:
+        return _build_parsed_rate(
+            current_rate=None,
+            current_date=None,
+            previous_rate=None,
+            previous_date=None,
+            details=f"NFEASWAP архив CSV: срок {tenor} не найден в заголовке.",
+        )
+    tenor_index = header.index(tenor)
+
+    points: list[tuple[str, float]] = []
+    for row in rows[2:]:
+        if len(row) <= tenor_index:
+            continue
+        rate_date = _normalize_nfeaswap_date(row[0])
+        rate_value = _to_float(row[tenor_index].replace("--", "").strip())
+        if rate_date is None or rate_value is None:
+            continue
+        points.append((rate_date, rate_value))
+        if len(points) >= 2:
+            break
+
+    current_rate = points[0][1] if points else None
+    current_date = points[0][0] if points else None
+    previous_rate = points[1][1] if len(points) > 1 else None
+    previous_date = points[1][0] if len(points) > 1 else None
+
+    return _build_parsed_rate(
+        current_rate=current_rate,
+        current_date=current_date,
+        previous_rate=previous_rate,
+        previous_date=previous_date,
+        details=f"NFEASWAP архив CSV: срок {tenor}.",
+    )
+
+
 PARSERS: dict[str, Callable[[str], ParsedRate]] = {
     "cbr_key_rate": _parse_cbr_key_rate,
     "ruonia_rate": _parse_ruonia_rate,
@@ -555,6 +637,8 @@ def scrape_source(source: SourceConfig) -> dict[str, str | float | None]:
     try:
         if source.parser in MOEX_ISS_INDEX_SECIDS:
             parsed = _parse_moex_iss_rate(MOEX_ISS_INDEX_SECIDS[source.parser])
+        elif source.parser in NFEASWAP_TENOR_PARSERS:
+            parsed = _parse_nfeaswap_tenor(NFEASWAP_TENOR_PARSERS[source.parser])
         elif source.parser == "sofr_rate":
             parsed = _parse_sofr_rate()
         else:

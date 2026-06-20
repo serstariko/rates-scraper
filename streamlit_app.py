@@ -40,6 +40,46 @@ DEFAULT_SOURCES = [
         "parser": "sofr_rate",
     },
     {
+        "name": "NFEASWAP — 1W",
+        "url": "https://nfeaswap.ru/",
+        "parser": "nfeaswap_1w_rate",
+    },
+    {
+        "name": "NFEASWAP — 2W",
+        "url": "https://nfeaswap.ru/",
+        "parser": "nfeaswap_2w_rate",
+    },
+    {
+        "name": "NFEASWAP — 1M",
+        "url": "https://nfeaswap.ru/",
+        "parser": "nfeaswap_1m_rate",
+    },
+    {
+        "name": "NFEASWAP — 2M",
+        "url": "https://nfeaswap.ru/",
+        "parser": "nfeaswap_2m_rate",
+    },
+    {
+        "name": "NFEASWAP — 3M",
+        "url": "https://nfeaswap.ru/",
+        "parser": "nfeaswap_3m_rate",
+    },
+    {
+        "name": "NFEASWAP — 6M",
+        "url": "https://nfeaswap.ru/",
+        "parser": "nfeaswap_6m_rate",
+    },
+    {
+        "name": "NFEASWAP — 9M",
+        "url": "https://nfeaswap.ru/",
+        "parser": "nfeaswap_9m_rate",
+    },
+    {
+        "name": "NFEASWAP — 1Y",
+        "url": "https://nfeaswap.ru/",
+        "parser": "nfeaswap_1y_rate",
+    },
+    {
         "name": "ESTER — global-rates",
         "url": "https://www.global-rates.com/en/interest-rates/ester/",
         "parser": "ester_rate",
@@ -88,6 +128,7 @@ def main() -> None:
     st.title("Парсер процентных ставок с выгрузкой в Excel")
     st.write(
         "Используется фиксированный список источников: RUONIA, RUSFAR, RUSFAR3M, RUSFARCNY, SOFR, "
+        "NFEASWAP (1W-1Y), "
         "ESTER и EURIBOR 1M/3M/6M. "
         "Данные загружаются автоматически при открытии страницы, обновляются каждый час и по кнопке **Обновить сейчас**."
     )
