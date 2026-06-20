@@ -34,12 +34,19 @@ NFEASWAP_TENOR_PARSERS = {
     "nfeaswap_9m_rate": "9M",
     "nfeaswap_1y_rate": "1Y",
 }
-CME_SOFR_SWAP_TENOR_PARSERS = {
+CME_SOFR_SWAP_DIRECT_TENOR_PARSERS = {
     "cme_sofr_swap_1y_rate": "1 Year",
     "cme_sofr_swap_2y_rate": "2 Year",
     "cme_sofr_swap_3y_rate": "3 Year",
     "cme_sofr_swap_5y_rate": "5 Year",
     "cme_sofr_swap_10y_rate": "10 Year",
+}
+CME_SOFR_SWAP_INTERPOLATED_TENOR_PARSERS = {
+    "cme_sofr_swap_4y_interp_rate": 4,
+    "cme_sofr_swap_6y_interp_rate": 6,
+    "cme_sofr_swap_7y_interp_rate": 7,
+    "cme_sofr_swap_8y_interp_rate": 8,
+    "cme_sofr_swap_9y_interp_rate": 9,
 }
 SOFR_MARKETS_API_URL = (
     "https://markets.newyorkfed.org/read"
@@ -702,6 +709,34 @@ def _extract_cme_trade_date(page_text: str) -> str | None:
     return None
 
 
+def _extract_cme_year_from_tenor_label(tenor_label: str) -> int | None:
+    match = re.fullmatch(r"(\d+)\s+Year", tenor_label.strip())
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _fetch_cme_sofr_curve(source_url: str) -> tuple[str | None, dict[int, float]]:
+    try:
+        page_text = fetch_html(source_url)
+    except Exception:  # noqa: BLE001 - fallback на прокси при блокировке/ошибках CME
+        page_text = fetch_html(_cme_proxy_url(source_url))
+
+    if CME_BLOCK_MESSAGE_FRAGMENT in page_text or page_text.strip().startswith('{"message":'):
+        page_text = fetch_html(_cme_proxy_url(source_url))
+
+    trade_date = _extract_cme_trade_date(page_text)
+    tenor_rows = _extract_cme_sofr_rows(page_text)
+
+    curve_by_year: dict[int, float] = {}
+    for tenor_label, rate in tenor_rows.items():
+        tenor_year = _extract_cme_year_from_tenor_label(tenor_label)
+        if tenor_year is None:
+            continue
+        curve_by_year[tenor_year] = rate
+    return trade_date, curve_by_year
+
+
 def _load_cme_sofr_cache() -> dict[str, dict[str, str | float]]:
     try:
         cache_text = CME_SOFR_CACHE_PATH.read_text(encoding="utf-8")
@@ -728,33 +763,64 @@ def _save_cme_sofr_cache(cache: dict[str, dict[str, str | float]]) -> None:
         return
 
 
+def _get_cme_cached_previous(
+    cache: dict[str, dict[str, str | float]], cache_key: str, trade_date: str | None
+) -> tuple[float | None, str | None]:
+    cached = cache.get(cache_key, {})
+    cached_current_rate = _to_float(cached.get("current_rate"))
+    cached_current_date = cached.get("current_date")
+    current_date_value = cached_current_date if isinstance(cached_current_date, str) else None
+
+    cached_previous_rate = _to_float(cached.get("previous_rate"))
+    cached_previous_date = cached.get("previous_date")
+    previous_date_value = cached_previous_date if isinstance(cached_previous_date, str) else None
+
+    if (
+        trade_date is not None
+        and current_date_value is not None
+        and current_date_value != trade_date
+        and cached_current_rate is not None
+    ):
+        return cached_current_rate, current_date_value
+    return cached_previous_rate, previous_date_value
+
+
+def _update_cme_cache(
+    cache: dict[str, dict[str, str | float]],
+    cache_key: str,
+    current_rate: float | None,
+    trade_date: str | None,
+    previous_rate: float | None,
+    previous_date: str | None,
+) -> None:
+    if current_rate is None or trade_date is None:
+        return
+    cache[cache_key] = {
+        "current_rate": current_rate,
+        "current_date": trade_date,
+        "previous_rate": previous_rate,
+        "previous_date": previous_date,
+    }
+    _save_cme_sofr_cache(cache)
+
+
 def _parse_cme_sofr_swap_tenor(tenor: str, source_url: str) -> ParsedRate:
-    try:
-        page_text = fetch_html(source_url)
-    except Exception:  # noqa: BLE001 - fallback на прокси при блокировке/ошибках CME
-        page_text = fetch_html(_cme_proxy_url(source_url))
+    tenor_year = _extract_cme_year_from_tenor_label(tenor)
+    if tenor_year is None:
+        return _build_parsed_rate(
+            current_rate=None,
+            current_date=None,
+            previous_rate=None,
+            previous_date=None,
+            details=f"CME Cleared SOFR Swaps: неизвестный срок {tenor}.",
+        )
 
-    if CME_BLOCK_MESSAGE_FRAGMENT in page_text or page_text.strip().startswith('{"message":'):
-        page_text = fetch_html(_cme_proxy_url(source_url))
-
-    trade_date = _extract_cme_trade_date(page_text)
-    rates_by_tenor = _extract_cme_sofr_rows(page_text)
-    current_rate = rates_by_tenor.get(tenor)
-
+    trade_date, curve_by_year = _fetch_cme_sofr_curve(source_url)
+    current_rate = curve_by_year.get(tenor_year)
     cache = _load_cme_sofr_cache()
-    cached_tenor = cache.get(tenor, {})
-    previous_rate = _to_float(cached_tenor.get("current_rate"))
-    previous_date_value = cached_tenor.get("current_date")
-    previous_date = previous_date_value if isinstance(previous_date_value, str) else None
-
-    if current_rate is not None and trade_date is not None:
-        cache[tenor] = {
-            "current_rate": current_rate,
-            "current_date": trade_date,
-            "previous_rate": previous_rate,
-            "previous_date": previous_date,
-        }
-        _save_cme_sofr_cache(cache)
+    cache_key = f"spot:{tenor_year}Y"
+    previous_rate, previous_date = _get_cme_cached_previous(cache, cache_key, trade_date)
+    _update_cme_cache(cache, cache_key, current_rate, trade_date, previous_rate, previous_date)
 
     return _build_parsed_rate(
         current_rate=current_rate,
@@ -763,6 +829,47 @@ def _parse_cme_sofr_swap_tenor(tenor: str, source_url: str) -> ParsedRate:
         previous_date=previous_date,
         details=(
             f"CME Cleared SOFR Swaps ({tenor}) через страницу SOFR OIS Curve; "
+            "предыдущее значение берётся из предыдущего успешного опроса."
+        ),
+    )
+
+
+def _parse_cme_sofr_swap_interpolated_tenor(target_year: int, source_url: str) -> ParsedRate:
+    trade_date, curve_by_year = _fetch_cme_sofr_curve(source_url)
+
+    current_rate: float | None = None
+    interpolation_details = "недостаточно точек для интерполяции"
+
+    if target_year in curve_by_year:
+        current_rate = curve_by_year[target_year]
+        interpolation_details = "использована фактическая ставка из кривой"
+    else:
+        lower_years = sorted(year for year in curve_by_year if year < target_year)
+        upper_years = sorted(year for year in curve_by_year if year > target_year)
+        if lower_years and upper_years:
+            lower_year = lower_years[-1]
+            upper_year = upper_years[0]
+            lower_rate = curve_by_year[lower_year]
+            upper_rate = curve_by_year[upper_year]
+            slope = (upper_rate - lower_rate) / (upper_year - lower_year)
+            current_rate = lower_rate + slope * (target_year - lower_year)
+            interpolation_details = (
+                f"линейная интерполяция между {lower_year}Y ({lower_rate:.4f}) "
+                f"и {upper_year}Y ({upper_rate:.4f})"
+            )
+
+    cache = _load_cme_sofr_cache()
+    cache_key = f"interp:{target_year}Y"
+    previous_rate, previous_date = _get_cme_cached_previous(cache, cache_key, trade_date)
+    _update_cme_cache(cache, cache_key, current_rate, trade_date, previous_rate, previous_date)
+
+    return _build_parsed_rate(
+        current_rate=current_rate,
+        current_date=trade_date,
+        previous_rate=previous_rate,
+        previous_date=previous_date,
+        details=(
+            f"CME Cleared SOFR Swaps ({target_year}Y, расчетное); {interpolation_details}; "
             "предыдущее значение берётся из предыдущего успешного опроса."
         ),
     )
@@ -818,8 +925,14 @@ def scrape_source(source: SourceConfig) -> dict[str, str | float | None]:
             parsed = _parse_moex_iss_rate(MOEX_ISS_INDEX_SECIDS[source.parser])
         elif source.parser in NFEASWAP_TENOR_PARSERS:
             parsed = _parse_nfeaswap_tenor(NFEASWAP_TENOR_PARSERS[source.parser])
-        elif source.parser in CME_SOFR_SWAP_TENOR_PARSERS:
-            parsed = _parse_cme_sofr_swap_tenor(CME_SOFR_SWAP_TENOR_PARSERS[source.parser], source.url)
+        elif source.parser in CME_SOFR_SWAP_DIRECT_TENOR_PARSERS:
+            parsed = _parse_cme_sofr_swap_tenor(
+                CME_SOFR_SWAP_DIRECT_TENOR_PARSERS[source.parser], source.url
+            )
+        elif source.parser in CME_SOFR_SWAP_INTERPOLATED_TENOR_PARSERS:
+            parsed = _parse_cme_sofr_swap_interpolated_tenor(
+                CME_SOFR_SWAP_INTERPOLATED_TENOR_PARSERS[source.parser], source.url
+            )
         elif source.parser == "sofr_rate":
             parsed = _parse_sofr_rate()
         else:

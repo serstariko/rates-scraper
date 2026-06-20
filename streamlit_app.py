@@ -60,9 +60,34 @@ DEFAULT_SOURCES = [
         "parser": "cme_sofr_swap_3y_rate",
     },
     {
+        "name": "CME SOFR OIS — 4Y (расчет.)",
+        "url": "https://www.cmegroup.com/trading/interest-rates/cleared-otc-sofr-swaps.html",
+        "parser": "cme_sofr_swap_4y_interp_rate",
+    },
+    {
         "name": "CME SOFR OIS — 5Y",
         "url": "https://www.cmegroup.com/trading/interest-rates/cleared-otc-sofr-swaps.html",
         "parser": "cme_sofr_swap_5y_rate",
+    },
+    {
+        "name": "CME SOFR OIS — 6Y (расчет.)",
+        "url": "https://www.cmegroup.com/trading/interest-rates/cleared-otc-sofr-swaps.html",
+        "parser": "cme_sofr_swap_6y_interp_rate",
+    },
+    {
+        "name": "CME SOFR OIS — 7Y (расчет.)",
+        "url": "https://www.cmegroup.com/trading/interest-rates/cleared-otc-sofr-swaps.html",
+        "parser": "cme_sofr_swap_7y_interp_rate",
+    },
+    {
+        "name": "CME SOFR OIS — 8Y (расчет.)",
+        "url": "https://www.cmegroup.com/trading/interest-rates/cleared-otc-sofr-swaps.html",
+        "parser": "cme_sofr_swap_8y_interp_rate",
+    },
+    {
+        "name": "CME SOFR OIS — 9Y (расчет.)",
+        "url": "https://www.cmegroup.com/trading/interest-rates/cleared-otc-sofr-swaps.html",
+        "parser": "cme_sofr_swap_9y_interp_rate",
     },
     {
         "name": "CME SOFR OIS — 10Y",
@@ -208,7 +233,7 @@ def main() -> None:
     st.title("Парсер процентных ставок с выгрузкой в Excel")
     st.write(
         "Используется фиксированный список источников: ключевая ставка ЦБ РФ, RUONIA, "
-        "RUSFAR, RUSFAR3M, RUSFARCNY, SOFR, CME SOFR OIS (1Y/2Y/3Y/5Y/10Y), "
+        "RUSFAR, RUSFAR3M, RUSFARCNY, SOFR, CME SOFR OIS (1Y-10Y, с интерполяцией 4Y/6Y/7Y/8Y/9Y), "
         "NFEASWAP (1W-1Y), "
         "ESTER и EURIBOR 1M/3M/6M. "
         "Данные загружаются автоматически при открытии страницы, обновляются каждый час и по кнопке **Обновить сейчас**."
