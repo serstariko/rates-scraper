@@ -153,6 +153,56 @@ def _refresh_results(source_configs: list[SourceConfig], reason: str) -> None:
     st.session_state.last_refresh_reason = reason
 
 
+def _build_summary_results_table(results: pd.DataFrame) -> pd.DataFrame:
+    summary_columns = [
+        "source_name",
+        "rate_percent",
+        "rate_date",
+        "previous_rate_percent",
+        "previous_rate_date",
+        "absolute_change_percent",
+        "relative_change_percent",
+        "status",
+        "collected_at_utc",
+    ]
+    existing_columns = [column for column in summary_columns if column in results.columns]
+    summary = results[existing_columns].copy()
+    summary = summary.rename(
+        columns={
+            "source_name": "Источник",
+            "rate_percent": "Текущая ставка",
+            "rate_date": "Дата текущей",
+            "previous_rate_percent": "Предыдущая ставка",
+            "previous_rate_date": "Дата предыдущей",
+            "absolute_change_percent": "Изменение (абс.)",
+            "relative_change_percent": "Изменение (%)",
+            "status": "Статус",
+            "collected_at_utc": "Собрано (UTC)",
+        }
+    )
+    return summary
+
+
+def _build_technical_results_table(results: pd.DataFrame) -> pd.DataFrame:
+    technical_columns_order = [
+        "source_name",
+        "source_url",
+        "parser",
+        "rate_percent",
+        "rate_date",
+        "previous_rate_percent",
+        "previous_rate_date",
+        "relative_change_percent",
+        "absolute_change_percent",
+        "status",
+        "details",
+        "error",
+        "collected_at_utc",
+    ]
+    columns = [column for column in technical_columns_order if column in results.columns]
+    return results[columns].copy()
+
+
 def main() -> None:
     st.set_page_config(page_title="Парсер процентных ставок", layout="wide")
     st.title("Парсер процентных ставок с выгрузкой в Excel")
@@ -220,7 +270,47 @@ def main() -> None:
     results = st.session_state.results
     if not results.empty:
         st.subheader("Результаты парсинга")
-        st.dataframe(results, use_container_width=True)
+        status_counts = results["status"].value_counts(dropna=False).to_dict()
+        ok_count = int(status_counts.get("ok", 0))
+        error_count = int(status_counts.get("error", 0))
+        not_found_count = int(status_counts.get("no_rate_found", 0))
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("OK", ok_count)
+        c2.metric("Ошибка", error_count)
+        c3.metric("Не найдено", not_found_count)
+
+        status_options = ["Все", "ok", "no_rate_found", "error"]
+        selected_status = st.selectbox(
+            "Фильтр по статусу",
+            options=status_options,
+            index=0,
+            key="results_status_filter",
+        )
+
+        filtered_results = results.copy()
+        if selected_status != "Все":
+            filtered_results = filtered_results[filtered_results["status"] == selected_status]
+
+        summary_table = _build_summary_results_table(filtered_results)
+        technical_table = _build_technical_results_table(filtered_results)
+
+        summary_tab, technical_tab = st.tabs(["Основная таблица", "Технические детали"])
+        with summary_tab:
+            st.dataframe(
+                summary_table,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Текущая ставка": st.column_config.NumberColumn(format="%.4f"),
+                    "Предыдущая ставка": st.column_config.NumberColumn(format="%.4f"),
+                    "Изменение (абс.)": st.column_config.NumberColumn(format="%.4f"),
+                    "Изменение (%)": st.column_config.NumberColumn(format="%.4f"),
+                },
+            )
+        with technical_tab:
+            st.dataframe(technical_table, use_container_width=True, hide_index=True)
+
         st.download_button(
             label="Скачать Excel",
             data=_to_excel_bytes(results),
