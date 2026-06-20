@@ -2,17 +2,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import json
 import re
 from typing import Callable
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
+MOEX_ISS_INDEX_SECIDS = {
+    "rusfar_rate": "RUSFAR",
+    "rusfar3m_rate": "RUSFAR3M",
+    "rusfarcny_rate": "RUSFARCNY",
+}
 
 
 @dataclass(slots=True)
@@ -375,6 +383,83 @@ def _parse_euribor_6m_rate(html: str) -> ParsedRate:
     return _parse_euribor_rate(html, maturity_months=6, maturity_column=3)
 
 
+def _to_float(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        normalized = value.strip().replace(",", ".")
+        if not normalized:
+            return None
+        try:
+            return float(normalized)
+        except ValueError:
+            return None
+    return None
+
+
+def _parse_moex_iss_rate(secid: str) -> ParsedRate:
+    market_url = (
+        "https://iss.moex.com/iss/engines/stock/markets/index/securities/"
+        f"{secid}.json?iss.meta=off&iss.only=marketdata"
+        "&marketdata.columns=SECID,TRADEDATE,CURRENTVALUE,LASTVALUE,UPDATETIME"
+    )
+    history_url = (
+        "https://iss.moex.com/iss/history/engines/stock/markets/index/securities/"
+        f"{secid}.json?iss.meta=off&history.columns=TRADEDATE,CLOSE&sort_order=desc&start=0&limit=20"
+    )
+
+    market_json = json.loads(fetch_html(market_url))
+    market_data = market_json.get("marketdata", {})
+    market_columns = market_data.get("columns", [])
+    market_rows = market_data.get("data", [])
+
+    current_rate: float | None = None
+    current_date: str | None = None
+    if market_rows:
+        market_row = dict(zip(market_columns, market_rows[0]))
+        current_rate = _to_float(market_row.get("CURRENTVALUE"))
+        if current_rate is None:
+            current_rate = _to_float(market_row.get("LASTVALUE"))
+        current_date = market_row.get("TRADEDATE")
+
+    history_json = json.loads(fetch_html(history_url))
+    history_data = history_json.get("history", {})
+    history_columns = history_data.get("columns", [])
+    history_rows = history_data.get("data", [])
+
+    history_points: list[tuple[str, float]] = []
+    for row in history_rows:
+        parsed_row = dict(zip(history_columns, row))
+        trade_date = parsed_row.get("TRADEDATE")
+        close_value = _to_float(parsed_row.get("CLOSE"))
+        if isinstance(trade_date, str) and close_value is not None:
+            history_points.append((trade_date, close_value))
+
+    if current_date is None and history_points:
+        current_date = history_points[0][0]
+    if current_rate is None and history_points:
+        current_rate = history_points[0][1]
+
+    previous_rate: float | None = None
+    previous_date: str | None = None
+    for trade_date, close_value in history_points:
+        if current_date is not None and trade_date == current_date:
+            continue
+        previous_date = trade_date
+        previous_rate = close_value
+        break
+
+    return _build_parsed_rate(
+        current_rate=current_rate,
+        current_date=current_date,
+        previous_rate=previous_rate,
+        previous_date=previous_date,
+        details=f"MOEX ISS индекс {secid} (CURRENTVALUE + history CLOSE).",
+    )
+
+
 PARSERS: dict[str, Callable[[str], ParsedRate]] = {
     "cbr_key_rate": _parse_cbr_key_rate,
     "ruonia_rate": _parse_ruonia_rate,
@@ -389,13 +474,31 @@ PARSERS: dict[str, Callable[[str], ParsedRate]] = {
 
 
 def fetch_html(url: str, timeout: int = 25) -> str:
-    response = requests.get(
-        url,
-        timeout=timeout,
-        headers={"User-Agent": USER_AGENT, "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8"},
+    session = requests.Session()
+    retry_policy = Retry(
+        total=3,
+        connect=3,
+        read=3,
+        status=3,
+        backoff_factor=0.7,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET", "HEAD", "OPTIONS"}),
+        raise_on_status=False,
     )
-    response.raise_for_status()
-    return response.text
+    adapter = HTTPAdapter(max_retries=retry_policy)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+
+    try:
+        response = session.get(
+            url,
+            timeout=timeout,
+            headers={"User-Agent": USER_AGENT, "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8"},
+        )
+        response.raise_for_status()
+        return response.text
+    finally:
+        session.close()
 
 
 def scrape_source(source: SourceConfig) -> dict[str, str | float | None]:
@@ -403,8 +506,11 @@ def scrape_source(source: SourceConfig) -> dict[str, str | float | None]:
     parser = PARSERS.get(source.parser, PARSERS["generic"])
 
     try:
-        html = fetch_html(source.url)
-        parsed = parser(html)
+        if source.parser in MOEX_ISS_INDEX_SECIDS:
+            parsed = _parse_moex_iss_rate(MOEX_ISS_INDEX_SECIDS[source.parser])
+        else:
+            html = fetch_html(source.url)
+            parsed = parser(html)
         current_rate = parsed.current_rate
         current_date = parsed.current_date
         previous_rate = parsed.previous_rate

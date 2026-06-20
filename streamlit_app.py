@@ -20,6 +20,21 @@ DEFAULT_SOURCES = [
         "parser": "ruonia_rate",
     },
     {
+        "name": "MOEX — RUSFAR (CURRENTVALUE)",
+        "url": "https://iss.moex.com/iss/engines/stock/markets/index/securities/RUSFAR.json",
+        "parser": "rusfar_rate",
+    },
+    {
+        "name": "MOEX — RUSFAR3M (CURRENTVALUE)",
+        "url": "https://iss.moex.com/iss/engines/stock/markets/index/securities/RUSFAR3M.json",
+        "parser": "rusfar3m_rate",
+    },
+    {
+        "name": "MOEX — RUSFARCNY (CURRENTVALUE)",
+        "url": "https://iss.moex.com/iss/engines/stock/markets/index/securities/RUSFARCNY.json",
+        "parser": "rusfarcny_rate",
+    },
+    {
         "name": "ESTER — global-rates",
         "url": "https://www.global-rates.com/en/interest-rates/ester/",
         "parser": "ester_rate",
@@ -67,7 +82,8 @@ def main() -> None:
     st.set_page_config(page_title="Парсер процентных ставок", layout="wide")
     st.title("Парсер процентных ставок с выгрузкой в Excel")
     st.write(
-        "Используется фиксированный список источников: RUONIA, ESTER и EURIBOR 1M/3M/6M. "
+        "Используется фиксированный список источников: RUONIA, RUSFAR, RUSFAR3M, RUSFARCNY, "
+        "ESTER и EURIBOR 1M/3M/6M. "
         "Данные загружаются автоматически при открытии страницы, обновляются каждый час и по кнопке **Обновить сейчас**."
     )
 
