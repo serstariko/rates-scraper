@@ -4,7 +4,7 @@
 
 ## Возможности
 
-- Фиксированный список источников по запросу: ключевая ставка ЦБ РФ, RUONIA, FR007, USD/CNY Swap Point (1W,1M,2M,3M,6M,9M,1Y-5Y), RUSFAR, RUSFAR3M, RUSFARCNY, OISFX, SOFR, CME SOFR OIS (1Y-10Y, расчётные 4Y/6Y/7Y/8Y/9Y по линейной интерполяции), NFEASWAP (1W-1Y), ESTER, EURIBOR 1M/3M/6M.
+- Фиксированный список источников по запросу: ключевая ставка ЦБ РФ, RUONIA, FR007, USD/CNY Swap Point (1W,1M,2M,3M,6M,9M,1Y-5Y), EUR/USD Swap Point (1W,2W,1M,2M,3M,6M,9M), RUSFAR, RUSFAR3M, RUSFARCNY, OISFX, SOFR, CME SOFR OIS (1Y-10Y, расчётные 4Y/6Y/7Y/8Y/9Y по линейной интерполяции), NFEASWAP (1W-1Y), ESTER, EURIBOR 1M/3M/6M.
 - Автоматическая загрузка данных при открытии страницы.
 - Автообновление данных каждый час.
 - Ручное обновление кнопкой **Обновить сейчас**.
@@ -24,6 +24,13 @@
   - `usdcny_swap_point_3y_rate` (ChinaMoney USD/CNY FX Swap Curve, Swap Point (Pips), срок 3Y)
   - `usdcny_swap_point_4y_rate` (ChinaMoney USD/CNY FX Swap Curve, Swap Point (Pips), срок 4Y)
   - `usdcny_swap_point_5y_rate` (ChinaMoney USD/CNY FX Swap Curve, Swap Point (Pips), срок 5Y)
+  - `eurusd_swap_point_1w_rate` (ChinaMoney EUR/USD FX Swap Curve, Swap Point (Pips), срок 1W)
+  - `eurusd_swap_point_2w_rate` (ChinaMoney EUR/USD FX Swap Curve, Swap Point (Pips), срок 2W)
+  - `eurusd_swap_point_1m_rate` (ChinaMoney EUR/USD FX Swap Curve, Swap Point (Pips), срок 1M)
+  - `eurusd_swap_point_2m_rate` (ChinaMoney EUR/USD FX Swap Curve, Swap Point (Pips), срок 2M)
+  - `eurusd_swap_point_3m_rate` (ChinaMoney EUR/USD FX Swap Curve, Swap Point (Pips), срок 3M)
+  - `eurusd_swap_point_6m_rate` (ChinaMoney EUR/USD FX Swap Curve, Swap Point (Pips), срок 6M)
+  - `eurusd_swap_point_9m_rate` (ChinaMoney EUR/USD FX Swap Curve, Swap Point (Pips), срок 9M)
   - `rusfar_rate` (MOEX ISS: индекс RUSFAR, поле `CURRENTVALUE`)
   - `rusfar3m_rate` (MOEX ISS: индекс RUSFAR3M, поле `CURRENTVALUE`)
   - `rusfarcny_rate` (MOEX ISS: индекс RUSFARCNY, поле `CURRENTVALUE`)
