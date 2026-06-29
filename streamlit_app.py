@@ -145,6 +145,11 @@ DEFAULT_SOURCES = [
         "parser": "sofr_rate",
     },
     {
+        "name": "Cbonds — SOFR 1M (Index 72053)",
+        "url": "https://cbonds.ru/indexes/72053/",
+        "parser": "cbonds_index_rate",
+    },
+    {
         "name": "CME SOFR OIS — 1Y",
         "url": "https://www.cmegroup.com/trading/interest-rates/cleared-otc-sofr-swaps.html",
         "parser": "cme_sofr_swap_1y_rate",
@@ -271,9 +276,15 @@ def _fixed_source_configs() -> list[SourceConfig]:
     return [SourceConfig(name=row["name"], url=row["url"], parser=row["parser"]) for row in DEFAULT_SOURCES]
 
 
-def _refresh_results(source_configs: list[SourceConfig], reason: str) -> None:
+def _refresh_results(
+    source_configs: list[SourceConfig],
+    reason: str,
+    cbonds_credentials: tuple[str, str] | None = None,
+) -> None:
     with st.spinner("Идёт сбор данных..."):
-        st.session_state.results = scrape_all_sources(source_configs)
+        st.session_state.results = scrape_all_sources(
+            source_configs, cbonds_credentials=cbonds_credentials
+        )
     st.session_state.last_refresh_at_utc = datetime.now(timezone.utc)
     st.session_state.last_refresh_reason = reason
 
@@ -335,11 +346,28 @@ def main() -> None:
         "Используется фиксированный список источников: ключевая ставка ЦБ РФ, RUONIA, FR007, "
         "USD/CNY Swap Point (1W,1M,2M,3M,6M,9M,1Y-5Y), "
         "EUR/USD Swap Point (1W,2W,1M,2M,3M,6M,9M), "
-        "RUSFAR, RUSFAR3M, RUSFARCNY, OISFX, SOFR, CME SOFR OIS (1Y-10Y, с интерполяцией 4Y/6Y/7Y/8Y/9Y), "
+        "RUSFAR, RUSFAR3M, RUSFARCNY, OISFX, SOFR, Cbonds SOFR 1M, "
+        "CME SOFR OIS (1Y-10Y, с интерполяцией 4Y/6Y/7Y/8Y/9Y), "
         "NFEASWAP (1W-1Y), "
         "ESTER и EURIBOR 1M/3M/6M. "
         "Данные загружаются автоматически при открытии страницы, обновляются каждый час и по кнопке **Обновить сейчас**."
     )
+    with st.expander("Авторизация Cbonds (для закрытых источников)", expanded=False):
+        st.text_input(
+            "Логин Cbonds",
+            key="cbonds_login",
+            autocomplete="username",
+            help="Нужен для источников с parser=cbonds_index_rate.",
+        )
+        st.text_input(
+            "Пароль Cbonds",
+            type="password",
+            key="cbonds_password",
+            autocomplete="current-password",
+        )
+        st.caption(
+            "Учётные данные используются только для текущего запуска обновления и не выгружаются в результаты."
+        )
 
     if "results" not in st.session_state:
         st.session_state.results = pd.DataFrame()
@@ -371,8 +399,16 @@ def main() -> None:
     elif st_autorefresh is not None and auto_tick != st.session_state.last_auto_tick:
         refresh_reason = "hourly"
 
+    cbonds_login = str(st.session_state.get("cbonds_login", "")).strip()
+    cbonds_password = str(st.session_state.get("cbonds_password", "")).strip()
+    cbonds_credentials: tuple[str, str] | None = None
+    if cbonds_login and cbonds_password:
+        cbonds_credentials = (cbonds_login, cbonds_password)
+    elif cbonds_login or cbonds_password:
+        st.warning("Для Cbonds укажите и логин, и пароль (или оставьте оба поля пустыми).")
+
     if refresh_reason:
-        _refresh_results(source_configs, refresh_reason)
+        _refresh_results(source_configs, refresh_reason, cbonds_credentials=cbonds_credentials)
         st.success(f"Собрано источников: {len(st.session_state.results)}")
 
     st.session_state.last_auto_tick = auto_tick

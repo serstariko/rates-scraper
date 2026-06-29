@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 import json
 import re
-from typing import Callable
+from typing import Any, Callable
 import csv
 from io import StringIO
 from pathlib import Path
@@ -75,6 +75,7 @@ SOFR_MARKETS_API_URL = (
 )
 CHINAMONEY_FRR_JSON_URL = "https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/frr.json"
 CHINAMONEY_FRR_HISTORY_CSV_URL = "https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/frr-chrt.csv"
+CBONDS_LOGIN_URL = "https://cbonds.ru/profile/access/"
 CME_BLOCK_MESSAGE_FRAGMENT = "This IP address is blocked due to suspected web scraping activity"
 CME_SOFR_CACHE_PATH = Path(__file__).resolve().parent / ".cme_sofr_swaps_cache.json"
 CHINAMONEY_FX_SWAP_CACHE_PATH = (
@@ -1049,6 +1050,96 @@ def _parse_cme_sofr_swap_interpolated_tenor(target_year: int, source_url: str) -
     )
 
 
+def _parse_cbonds_rate_value(raw_value: Any) -> float | None:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, (int, float)):
+        return float(raw_value)
+    if not isinstance(raw_value, str):
+        return None
+    cleaned = raw_value.replace("\xa0", "").replace(" ", "").replace("%", "").strip()
+    if not cleaned or cleaned in {"***", "-", "—"}:
+        return None
+    return _to_float(cleaned)
+
+
+def _extract_cbonds_index_info(index_html: str) -> dict[str, Any]:
+    match = re.search(r"var\s+indexInfo\s*=\s*(\{.*?\});", index_html, re.S)
+    if not match:
+        raise ValueError("Cbonds: не найден блок indexInfo на странице индекса.")
+    try:
+        payload = json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        raise ValueError("Cbonds: не удалось распарсить JSON indexInfo.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Cbonds: indexInfo имеет неожиданный формат.")
+    return payload
+
+
+def _extract_cbonds_user_auth(index_html: str) -> int | None:
+    match = re.search(r"var\s+userAuth\s*=\s*(\d+)\s*;", index_html)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _parse_cbonds_index_rate(
+    source_url: str, cbonds_credentials: tuple[str, str] | None
+) -> ParsedRate:
+    if cbonds_credentials is None:
+        raise ValueError("Cbonds: укажите логин и пароль в настройках авторизации.")
+
+    login, password = cbonds_credentials
+    if not login.strip() or not password.strip():
+        raise ValueError("Cbonds: логин и пароль не должны быть пустыми.")
+
+    with _build_http_session() as session:
+        request_headers = {"User-Agent": USER_AGENT, "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8"}
+        session.get(CBONDS_LOGIN_URL, timeout=25, headers=request_headers)
+        login_response = session.post(
+            CBONDS_LOGIN_URL,
+            data={"login": login, "password": password},
+            timeout=25,
+            headers={**request_headers, "Referer": CBONDS_LOGIN_URL},
+            allow_redirects=True,
+        )
+        login_response.raise_for_status()
+
+        index_response = session.get(
+            source_url,
+            timeout=25,
+            headers={**request_headers, "Referer": CBONDS_LOGIN_URL},
+        )
+        index_response.raise_for_status()
+        index_html = index_response.text
+
+    user_auth = _extract_cbonds_user_auth(index_html)
+    if user_auth == 0:
+        raise ValueError("Cbonds: авторизация не подтверждена (проверьте логин/пароль).")
+
+    index_info = _extract_cbonds_index_info(index_html)
+    current_rate = _parse_cbonds_rate_value(index_info.get("actual_value"))
+    previous_rate = _parse_cbonds_rate_value(index_info.get("prev_value"))
+    current_date = index_info.get("actual_date")
+    previous_date = index_info.get("prev_date")
+    index_name = index_info.get("name")
+    if not isinstance(index_name, str) or not index_name.strip():
+        index_name = "Cbonds Index"
+
+    if current_rate is None:
+        raise ValueError(
+            "Cbonds: значение ставки скрыто или недоступно для текущего уровня доступа."
+        )
+
+    return _build_parsed_rate(
+        current_rate=current_rate,
+        current_date=current_date if isinstance(current_date, str) else None,
+        previous_rate=previous_rate,
+        previous_date=previous_date if isinstance(previous_date, str) else None,
+        details=f"{index_name} (Cbonds, indexInfo через авторизованную сессию).",
+    )
+
+
 PARSERS: dict[str, Callable[[str], ParsedRate]] = {
     "cbr_key_rate": _parse_cbr_key_rate,
     "ruonia_rate": _parse_ruonia_rate,
@@ -1062,7 +1153,7 @@ PARSERS: dict[str, Callable[[str], ParsedRate]] = {
 }
 
 
-def fetch_html(url: str, timeout: int = 25) -> str:
+def _build_http_session() -> requests.Session:
     session = requests.Session()
     retry_policy = Retry(
         total=3,
@@ -1071,14 +1162,17 @@ def fetch_html(url: str, timeout: int = 25) -> str:
         status=3,
         backoff_factor=0.7,
         status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=frozenset({"GET", "HEAD", "OPTIONS"}),
+        allowed_methods=frozenset({"GET", "HEAD", "OPTIONS", "POST"}),
         raise_on_status=False,
     )
     adapter = HTTPAdapter(max_retries=retry_policy)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
+    return session
 
-    try:
+
+def fetch_html(url: str, timeout: int = 25) -> str:
+    with _build_http_session() as session:
         response = session.get(
             url,
             timeout=timeout,
@@ -1086,11 +1180,11 @@ def fetch_html(url: str, timeout: int = 25) -> str:
         )
         response.raise_for_status()
         return response.text
-    finally:
-        session.close()
 
 
-def scrape_source(source: SourceConfig) -> dict[str, str | float | None]:
+def scrape_source(
+    source: SourceConfig, cbonds_credentials: tuple[str, str] | None = None
+) -> dict[str, str | float | None]:
     collected_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
     parser = PARSERS.get(source.parser, PARSERS["generic"])
 
@@ -1114,6 +1208,8 @@ def scrape_source(source: SourceConfig) -> dict[str, str | float | None]:
             parsed = _parse_sofr_rate()
         elif source.parser == "fr007_rate":
             parsed = _parse_fr007_rate()
+        elif source.parser == "cbonds_index_rate":
+            parsed = _parse_cbonds_index_rate(source.url, cbonds_credentials)
         else:
             html = fetch_html(source.url)
             parsed = parser(html)
@@ -1161,6 +1257,8 @@ def scrape_source(source: SourceConfig) -> dict[str, str | float | None]:
     }
 
 
-def scrape_all_sources(sources: list[SourceConfig]) -> pd.DataFrame:
-    rows = [scrape_source(source) for source in sources]
+def scrape_all_sources(
+    sources: list[SourceConfig], cbonds_credentials: tuple[str, str] | None = None
+) -> pd.DataFrame:
+    rows = [scrape_source(source, cbonds_credentials=cbonds_credentials) for source in sources]
     return pd.DataFrame(rows)

@@ -4,10 +4,11 @@
 
 ## Возможности
 
-- Фиксированный список источников по запросу: ключевая ставка ЦБ РФ, RUONIA, FR007, USD/CNY Swap Point (1W,1M,2M,3M,6M,9M,1Y-5Y), EUR/USD Swap Point (1W,2W,1M,2M,3M,6M,9M), RUSFAR, RUSFAR3M, RUSFARCNY, OISFX, SOFR, CME SOFR OIS (1Y-10Y, расчётные 4Y/6Y/7Y/8Y/9Y по линейной интерполяции), NFEASWAP (1W-1Y), ESTER, EURIBOR 1M/3M/6M.
+- Фиксированный список источников по запросу: ключевая ставка ЦБ РФ, RUONIA, FR007, USD/CNY Swap Point (1W,1M,2M,3M,6M,9M,1Y-5Y), EUR/USD Swap Point (1W,2W,1M,2M,3M,6M,9M), RUSFAR, RUSFAR3M, RUSFARCNY, OISFX, SOFR, Cbonds SOFR 1M (index 72053, через авторизацию), CME SOFR OIS (1Y-10Y, расчётные 4Y/6Y/7Y/8Y/9Y по линейной интерполяции), NFEASWAP (1W-1Y), ESTER, EURIBOR 1M/3M/6M.
 - Автоматическая загрузка данных при открытии страницы.
 - Автообновление данных каждый час.
 - Ручное обновление кнопкой **Обновить сейчас**.
+- В UI есть блок авторизации Cbonds (логин/пароль) для закрытых источников.
 - В блоке результатов: основная таблица, технические детали и фильтр по статусу (`ok`, `no_rate_found`, `error`).
 - Поддержка стратегий парсинга для выбранных источников:
   - `cbr_key_rate` (для https://cbr.ru/hd_base/KeyRate/)
@@ -36,6 +37,7 @@
   - `rusfarcny_rate` (MOEX ISS: индекс RUSFARCNY, поле `CURRENTVALUE`)
   - `oisfx_rate` (MOEX ISS: индекс OISFIXUSD, поле `CURRENTVALUE`)
   - `sofr_rate` (NY Fed Markets API: SOFR, поле `dailyRate`)
+  - `cbonds_index_rate` (Cbonds index page через авторизованную сессию, пример: https://cbonds.ru/indexes/72053/)
   - `cme_sofr_swap_1y_rate` (CME Cleared SOFR Swaps, срок 1Y)
   - `cme_sofr_swap_2y_rate` (CME Cleared SOFR Swaps, срок 2Y)
   - `cme_sofr_swap_3y_rate` (CME Cleared SOFR Swaps, срок 3Y)
