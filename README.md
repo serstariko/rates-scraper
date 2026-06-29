@@ -4,7 +4,7 @@
 
 ## Возможности
 
-- Фиксированный список источников по запросу: ключевая ставка ЦБ РФ, RUONIA, FR007, RUSFAR, RUSFAR3M, RUSFARCNY, OISFX, SOFR, CME SOFR OIS (1Y-10Y, расчётные 4Y/6Y/7Y/8Y/9Y по линейной интерполяции), NFEASWAP (1W-1Y), ESTER, EURIBOR 1M/3M/6M.
+- Фиксированный список источников по запросу: ключевая ставка ЦБ РФ, RUONIA, FR007, USD/CNY Swap Point (1W,1M,2M,3M,6M,9M,1Y-5Y), RUSFAR, RUSFAR3M, RUSFARCNY, OISFX, SOFR, CME SOFR OIS (1Y-10Y, расчётные 4Y/6Y/7Y/8Y/9Y по линейной интерполяции), NFEASWAP (1W-1Y), ESTER, EURIBOR 1M/3M/6M.
 - Автоматическая загрузка данных при открытии страницы.
 - Автообновление данных каждый час.
 - Ручное обновление кнопкой **Обновить сейчас**.
@@ -13,6 +13,17 @@
   - `cbr_key_rate` (для https://cbr.ru/hd_base/KeyRate/)
   - `ruonia_rate` (для https://cbr.ru/hd_base/ruonia/)
   - `fr007_rate` (для https://www.chinamoney.com.cn/english/bmkfrr/)
+  - `usdcny_swap_point_1w_rate` (ChinaMoney USD/CNY FX Swap Curve, Swap Point (Pips), срок 1W)
+  - `usdcny_swap_point_1m_rate` (ChinaMoney USD/CNY FX Swap Curve, Swap Point (Pips), срок 1M)
+  - `usdcny_swap_point_2m_rate` (ChinaMoney USD/CNY FX Swap Curve, Swap Point (Pips), срок 2M)
+  - `usdcny_swap_point_3m_rate` (ChinaMoney USD/CNY FX Swap Curve, Swap Point (Pips), срок 3M)
+  - `usdcny_swap_point_6m_rate` (ChinaMoney USD/CNY FX Swap Curve, Swap Point (Pips), срок 6M)
+  - `usdcny_swap_point_9m_rate` (ChinaMoney USD/CNY FX Swap Curve, Swap Point (Pips), срок 9M)
+  - `usdcny_swap_point_1y_rate` (ChinaMoney USD/CNY FX Swap Curve, Swap Point (Pips), срок 1Y)
+  - `usdcny_swap_point_2y_rate` (ChinaMoney USD/CNY FX Swap Curve, Swap Point (Pips), срок 2Y)
+  - `usdcny_swap_point_3y_rate` (ChinaMoney USD/CNY FX Swap Curve, Swap Point (Pips), срок 3Y)
+  - `usdcny_swap_point_4y_rate` (ChinaMoney USD/CNY FX Swap Curve, Swap Point (Pips), срок 4Y)
+  - `usdcny_swap_point_5y_rate` (ChinaMoney USD/CNY FX Swap Curve, Swap Point (Pips), срок 5Y)
   - `rusfar_rate` (MOEX ISS: индекс RUSFAR, поле `CURRENTVALUE`)
   - `rusfar3m_rate` (MOEX ISS: индекс RUSFAR3M, поле `CURRENTVALUE`)
   - `rusfarcny_rate` (MOEX ISS: индекс RUSFARCNY, поле `CURRENTVALUE`)

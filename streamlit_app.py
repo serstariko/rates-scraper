@@ -30,6 +30,61 @@ DEFAULT_SOURCES = [
         "parser": "fr007_rate",
     },
     {
+        "name": "ChinaMoney USD/CNY Swap Point — 1W",
+        "url": "https://www.chinamoney.com.cn/english/bmkycvfsc/",
+        "parser": "usdcny_swap_point_1w_rate",
+    },
+    {
+        "name": "ChinaMoney USD/CNY Swap Point — 1M",
+        "url": "https://www.chinamoney.com.cn/english/bmkycvfsc/",
+        "parser": "usdcny_swap_point_1m_rate",
+    },
+    {
+        "name": "ChinaMoney USD/CNY Swap Point — 2M",
+        "url": "https://www.chinamoney.com.cn/english/bmkycvfsc/",
+        "parser": "usdcny_swap_point_2m_rate",
+    },
+    {
+        "name": "ChinaMoney USD/CNY Swap Point — 3M",
+        "url": "https://www.chinamoney.com.cn/english/bmkycvfsc/",
+        "parser": "usdcny_swap_point_3m_rate",
+    },
+    {
+        "name": "ChinaMoney USD/CNY Swap Point — 6M",
+        "url": "https://www.chinamoney.com.cn/english/bmkycvfsc/",
+        "parser": "usdcny_swap_point_6m_rate",
+    },
+    {
+        "name": "ChinaMoney USD/CNY Swap Point — 9M",
+        "url": "https://www.chinamoney.com.cn/english/bmkycvfsc/",
+        "parser": "usdcny_swap_point_9m_rate",
+    },
+    {
+        "name": "ChinaMoney USD/CNY Swap Point — 1Y",
+        "url": "https://www.chinamoney.com.cn/english/bmkycvfsc/",
+        "parser": "usdcny_swap_point_1y_rate",
+    },
+    {
+        "name": "ChinaMoney USD/CNY Swap Point — 2Y",
+        "url": "https://www.chinamoney.com.cn/english/bmkycvfsc/",
+        "parser": "usdcny_swap_point_2y_rate",
+    },
+    {
+        "name": "ChinaMoney USD/CNY Swap Point — 3Y",
+        "url": "https://www.chinamoney.com.cn/english/bmkycvfsc/",
+        "parser": "usdcny_swap_point_3y_rate",
+    },
+    {
+        "name": "ChinaMoney USD/CNY Swap Point — 4Y",
+        "url": "https://www.chinamoney.com.cn/english/bmkycvfsc/",
+        "parser": "usdcny_swap_point_4y_rate",
+    },
+    {
+        "name": "ChinaMoney USD/CNY Swap Point — 5Y",
+        "url": "https://www.chinamoney.com.cn/english/bmkycvfsc/",
+        "parser": "usdcny_swap_point_5y_rate",
+    },
+    {
         "name": "MOEX — RUSFAR (CURRENTVALUE)",
         "url": "https://iss.moex.com/iss/engines/stock/markets/index/securities/RUSFAR.json",
         "parser": "rusfar_rate",
@@ -243,6 +298,7 @@ def main() -> None:
     st.title("Парсер процентных ставок с выгрузкой в Excel")
     st.write(
         "Используется фиксированный список источников: ключевая ставка ЦБ РФ, RUONIA, FR007, "
+        "USD/CNY Swap Point (1W,1M,2M,3M,6M,9M,1Y-5Y), "
         "RUSFAR, RUSFAR3M, RUSFARCNY, OISFX, SOFR, CME SOFR OIS (1Y-10Y, с интерполяцией 4Y/6Y/7Y/8Y/9Y), "
         "NFEASWAP (1W-1Y), "
         "ESTER и EURIBOR 1M/3M/6M. "

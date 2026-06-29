@@ -35,6 +35,19 @@ NFEASWAP_TENOR_PARSERS = {
     "nfeaswap_9m_rate": "9M",
     "nfeaswap_1y_rate": "1Y",
 }
+CHINAMONEY_USDCNY_SWAP_TENOR_PARSERS = {
+    "usdcny_swap_point_1w_rate": "1W",
+    "usdcny_swap_point_1m_rate": "1M",
+    "usdcny_swap_point_2m_rate": "2M",
+    "usdcny_swap_point_3m_rate": "3M",
+    "usdcny_swap_point_6m_rate": "6M",
+    "usdcny_swap_point_9m_rate": "9M",
+    "usdcny_swap_point_1y_rate": "1Y",
+    "usdcny_swap_point_2y_rate": "2Y",
+    "usdcny_swap_point_3y_rate": "3Y",
+    "usdcny_swap_point_4y_rate": "4Y",
+    "usdcny_swap_point_5y_rate": "5Y",
+}
 CME_SOFR_SWAP_DIRECT_TENOR_PARSERS = {
     "cme_sofr_swap_1y_rate": "1 Year",
     "cme_sofr_swap_2y_rate": "2 Year",
@@ -55,8 +68,14 @@ SOFR_MARKETS_API_URL = (
 )
 CHINAMONEY_FRR_JSON_URL = "https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/frr.json"
 CHINAMONEY_FRR_HISTORY_CSV_URL = "https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/frr-chrt.csv"
+CHINAMONEY_USDCNY_SWAP_JSON_URL = (
+    "https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/fx/fx-sw-curv-USD.CNY.json"
+)
 CME_BLOCK_MESSAGE_FRAGMENT = "This IP address is blocked due to suspected web scraping activity"
 CME_SOFR_CACHE_PATH = Path(__file__).resolve().parent / ".cme_sofr_swaps_cache.json"
+CHINAMONEY_USDCNY_SWAP_CACHE_PATH = (
+    Path(__file__).resolve().parent / ".chinamoney_usdcny_swap_cache.json"
+)
 
 
 @dataclass(slots=True)
@@ -611,6 +630,104 @@ def _parse_fr007_rate() -> ParsedRate:
     )
 
 
+def _load_chinamoney_usdcny_swap_cache() -> dict[str, dict[str, str | float]]:
+    try:
+        cache_text = CHINAMONEY_USDCNY_SWAP_CACHE_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except OSError:
+        return {}
+    try:
+        parsed = json.loads(cache_text)
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(parsed, dict):
+        return parsed
+    return {}
+
+
+def _save_chinamoney_usdcny_swap_cache(cache: dict[str, dict[str, str | float]]) -> None:
+    try:
+        CHINAMONEY_USDCNY_SWAP_CACHE_PATH.write_text(
+            json.dumps(cache, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    except OSError:
+        return
+
+
+def _get_cached_previous_from_cache(
+    cache: dict[str, dict[str, str | float]], cache_key: str, current_date: str | None
+) -> tuple[float | None, str | None]:
+    cached = cache.get(cache_key, {})
+    cached_current_rate = _to_float(cached.get("current_rate"))
+    cached_current_date_value = cached.get("current_date")
+    cached_current_date = (
+        cached_current_date_value if isinstance(cached_current_date_value, str) else None
+    )
+    cached_previous_rate = _to_float(cached.get("previous_rate"))
+    cached_previous_date_value = cached.get("previous_date")
+    cached_previous_date = (
+        cached_previous_date_value if isinstance(cached_previous_date_value, str) else None
+    )
+
+    if (
+        current_date is not None
+        and cached_current_date is not None
+        and cached_current_date != current_date
+        and cached_current_rate is not None
+    ):
+        return cached_current_rate, cached_current_date
+    return cached_previous_rate, cached_previous_date
+
+
+def _parse_chinamoney_usdcny_swap_tenor(tenor: str) -> ParsedRate:
+    payload = json.loads(fetch_html(CHINAMONEY_USDCNY_SWAP_JSON_URL))
+    data = payload.get("data", {})
+    records = data.get("voArray", [])
+
+    current_rate: float | None = None
+    for record in records:
+        if str(record.get("tenor", "")).upper() != tenor.upper():
+            continue
+        current_rate = _to_float(record.get("points"))
+        break
+
+    current_date: str | None = None
+    show_date_cn = data.get("showDateCN")
+    if isinstance(show_date_cn, str) and show_date_cn.strip():
+        current_date = show_date_cn.strip()
+    else:
+        show_date_en = data.get("showDateEN")
+        if isinstance(show_date_en, str):
+            current_date = show_date_en.split()[0:3]
+            current_date = " ".join(current_date) if current_date else None
+
+    cache = _load_chinamoney_usdcny_swap_cache()
+    cache_key = f"USD.CNY:{tenor.upper()}"
+    previous_rate, previous_date = _get_cached_previous_from_cache(cache, cache_key, current_date)
+
+    if current_rate is not None and current_date is not None:
+        cache[cache_key] = {
+            "current_rate": current_rate,
+            "current_date": current_date,
+            "previous_rate": previous_rate,
+            "previous_date": previous_date,
+        }
+        _save_chinamoney_usdcny_swap_cache(cache)
+
+    return _build_parsed_rate(
+        current_rate=current_rate,
+        current_date=current_date,
+        previous_rate=previous_rate,
+        previous_date=previous_date,
+        details=(
+            f"ChinaMoney USD/CNY FX Swap Curve ({tenor}, Swap Point (Pips)); "
+            "предыдущее значение берётся из предыдущего успешного опроса."
+        ),
+    )
+
+
 def _build_nfeaswap_archive_csv_url(days_back: int = 45) -> str:
     date_to = datetime.utcnow().date()
     date_from = date_to - timedelta(days=days_back)
@@ -974,6 +1091,10 @@ def scrape_source(source: SourceConfig) -> dict[str, str | float | None]:
             parsed = _parse_moex_iss_rate(MOEX_ISS_INDEX_SECIDS[source.parser])
         elif source.parser in NFEASWAP_TENOR_PARSERS:
             parsed = _parse_nfeaswap_tenor(NFEASWAP_TENOR_PARSERS[source.parser])
+        elif source.parser in CHINAMONEY_USDCNY_SWAP_TENOR_PARSERS:
+            parsed = _parse_chinamoney_usdcny_swap_tenor(
+                CHINAMONEY_USDCNY_SWAP_TENOR_PARSERS[source.parser]
+            )
         elif source.parser in CME_SOFR_SWAP_DIRECT_TENOR_PARSERS:
             parsed = _parse_cme_sofr_swap_tenor(
                 CME_SOFR_SWAP_DIRECT_TENOR_PARSERS[source.parser], source.url
