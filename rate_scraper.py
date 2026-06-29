@@ -35,18 +35,25 @@ NFEASWAP_TENOR_PARSERS = {
     "nfeaswap_9m_rate": "9M",
     "nfeaswap_1y_rate": "1Y",
 }
-CHINAMONEY_USDCNY_SWAP_TENOR_PARSERS = {
-    "usdcny_swap_point_1w_rate": "1W",
-    "usdcny_swap_point_1m_rate": "1M",
-    "usdcny_swap_point_2m_rate": "2M",
-    "usdcny_swap_point_3m_rate": "3M",
-    "usdcny_swap_point_6m_rate": "6M",
-    "usdcny_swap_point_9m_rate": "9M",
-    "usdcny_swap_point_1y_rate": "1Y",
-    "usdcny_swap_point_2y_rate": "2Y",
-    "usdcny_swap_point_3y_rate": "3Y",
-    "usdcny_swap_point_4y_rate": "4Y",
-    "usdcny_swap_point_5y_rate": "5Y",
+CHINAMONEY_FX_SWAP_TENOR_PARSERS: dict[str, tuple[str, str]] = {
+    "usdcny_swap_point_1w_rate": ("USD.CNY", "1W"),
+    "usdcny_swap_point_1m_rate": ("USD.CNY", "1M"),
+    "usdcny_swap_point_2m_rate": ("USD.CNY", "2M"),
+    "usdcny_swap_point_3m_rate": ("USD.CNY", "3M"),
+    "usdcny_swap_point_6m_rate": ("USD.CNY", "6M"),
+    "usdcny_swap_point_9m_rate": ("USD.CNY", "9M"),
+    "usdcny_swap_point_1y_rate": ("USD.CNY", "1Y"),
+    "usdcny_swap_point_2y_rate": ("USD.CNY", "2Y"),
+    "usdcny_swap_point_3y_rate": ("USD.CNY", "3Y"),
+    "usdcny_swap_point_4y_rate": ("USD.CNY", "4Y"),
+    "usdcny_swap_point_5y_rate": ("USD.CNY", "5Y"),
+    "eurusd_swap_point_1w_rate": ("EUR.USD", "1W"),
+    "eurusd_swap_point_2w_rate": ("EUR.USD", "2W"),
+    "eurusd_swap_point_1m_rate": ("EUR.USD", "1M"),
+    "eurusd_swap_point_2m_rate": ("EUR.USD", "2M"),
+    "eurusd_swap_point_3m_rate": ("EUR.USD", "3M"),
+    "eurusd_swap_point_6m_rate": ("EUR.USD", "6M"),
+    "eurusd_swap_point_9m_rate": ("EUR.USD", "9M"),
 }
 CME_SOFR_SWAP_DIRECT_TENOR_PARSERS = {
     "cme_sofr_swap_1y_rate": "1 Year",
@@ -68,12 +75,9 @@ SOFR_MARKETS_API_URL = (
 )
 CHINAMONEY_FRR_JSON_URL = "https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/frr.json"
 CHINAMONEY_FRR_HISTORY_CSV_URL = "https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/frr-chrt.csv"
-CHINAMONEY_USDCNY_SWAP_JSON_URL = (
-    "https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/fx/fx-sw-curv-USD.CNY.json"
-)
 CME_BLOCK_MESSAGE_FRAGMENT = "This IP address is blocked due to suspected web scraping activity"
 CME_SOFR_CACHE_PATH = Path(__file__).resolve().parent / ".cme_sofr_swaps_cache.json"
-CHINAMONEY_USDCNY_SWAP_CACHE_PATH = (
+CHINAMONEY_FX_SWAP_CACHE_PATH = (
     Path(__file__).resolve().parent / ".chinamoney_usdcny_swap_cache.json"
 )
 
@@ -630,9 +634,13 @@ def _parse_fr007_rate() -> ParsedRate:
     )
 
 
-def _load_chinamoney_usdcny_swap_cache() -> dict[str, dict[str, str | float]]:
+def _build_chinamoney_fx_swap_json_url(curve_type: str) -> str:
+    return f"https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/fx/fx-sw-curv-{curve_type}.json"
+
+
+def _load_chinamoney_fx_swap_cache() -> dict[str, dict[str, str | float]]:
     try:
-        cache_text = CHINAMONEY_USDCNY_SWAP_CACHE_PATH.read_text(encoding="utf-8")
+        cache_text = CHINAMONEY_FX_SWAP_CACHE_PATH.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
     except OSError:
@@ -646,9 +654,9 @@ def _load_chinamoney_usdcny_swap_cache() -> dict[str, dict[str, str | float]]:
     return {}
 
 
-def _save_chinamoney_usdcny_swap_cache(cache: dict[str, dict[str, str | float]]) -> None:
+def _save_chinamoney_fx_swap_cache(cache: dict[str, dict[str, str | float]]) -> None:
     try:
-        CHINAMONEY_USDCNY_SWAP_CACHE_PATH.write_text(
+        CHINAMONEY_FX_SWAP_CACHE_PATH.write_text(
             json.dumps(cache, ensure_ascii=False, indent=2, sort_keys=True),
             encoding="utf-8",
         )
@@ -681,8 +689,8 @@ def _get_cached_previous_from_cache(
     return cached_previous_rate, cached_previous_date
 
 
-def _parse_chinamoney_usdcny_swap_tenor(tenor: str) -> ParsedRate:
-    payload = json.loads(fetch_html(CHINAMONEY_USDCNY_SWAP_JSON_URL))
+def _parse_chinamoney_fx_swap_tenor(curve_type: str, tenor: str) -> ParsedRate:
+    payload = json.loads(fetch_html(_build_chinamoney_fx_swap_json_url(curve_type)))
     data = payload.get("data", {})
     records = data.get("voArray", [])
 
@@ -703,8 +711,8 @@ def _parse_chinamoney_usdcny_swap_tenor(tenor: str) -> ParsedRate:
             current_date = show_date_en.split()[0:3]
             current_date = " ".join(current_date) if current_date else None
 
-    cache = _load_chinamoney_usdcny_swap_cache()
-    cache_key = f"USD.CNY:{tenor.upper()}"
+    cache = _load_chinamoney_fx_swap_cache()
+    cache_key = f"{curve_type}:{tenor.upper()}"
     previous_rate, previous_date = _get_cached_previous_from_cache(cache, cache_key, current_date)
 
     if current_rate is not None and current_date is not None:
@@ -714,7 +722,7 @@ def _parse_chinamoney_usdcny_swap_tenor(tenor: str) -> ParsedRate:
             "previous_rate": previous_rate,
             "previous_date": previous_date,
         }
-        _save_chinamoney_usdcny_swap_cache(cache)
+        _save_chinamoney_fx_swap_cache(cache)
 
     return _build_parsed_rate(
         current_rate=current_rate,
@@ -722,7 +730,7 @@ def _parse_chinamoney_usdcny_swap_tenor(tenor: str) -> ParsedRate:
         previous_rate=previous_rate,
         previous_date=previous_date,
         details=(
-            f"ChinaMoney USD/CNY FX Swap Curve ({tenor}, Swap Point (Pips)); "
+            f"ChinaMoney {curve_type} FX Swap Curve ({tenor}, Swap Point (Pips)); "
             "предыдущее значение берётся из предыдущего успешного опроса."
         ),
     )
@@ -1091,10 +1099,9 @@ def scrape_source(source: SourceConfig) -> dict[str, str | float | None]:
             parsed = _parse_moex_iss_rate(MOEX_ISS_INDEX_SECIDS[source.parser])
         elif source.parser in NFEASWAP_TENOR_PARSERS:
             parsed = _parse_nfeaswap_tenor(NFEASWAP_TENOR_PARSERS[source.parser])
-        elif source.parser in CHINAMONEY_USDCNY_SWAP_TENOR_PARSERS:
-            parsed = _parse_chinamoney_usdcny_swap_tenor(
-                CHINAMONEY_USDCNY_SWAP_TENOR_PARSERS[source.parser]
-            )
+        elif source.parser in CHINAMONEY_FX_SWAP_TENOR_PARSERS:
+            curve_type, tenor = CHINAMONEY_FX_SWAP_TENOR_PARSERS[source.parser]
+            parsed = _parse_chinamoney_fx_swap_tenor(curve_type, tenor)
         elif source.parser in CME_SOFR_SWAP_DIRECT_TENOR_PARSERS:
             parsed = _parse_cme_sofr_swap_tenor(
                 CME_SOFR_SWAP_DIRECT_TENOR_PARSERS[source.parser], source.url
