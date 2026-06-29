@@ -78,7 +78,7 @@ CHINAMONEY_FRR_HISTORY_CSV_URL = "https://www.chinamoney.com.cn/r/cms/www/chinam
 CME_BLOCK_MESSAGE_FRAGMENT = "This IP address is blocked due to suspected web scraping activity"
 CME_SOFR_CACHE_PATH = Path(__file__).resolve().parent / ".cme_sofr_swaps_cache.json"
 CHINAMONEY_FX_SWAP_CACHE_PATH = (
-    Path(__file__).resolve().parent / ".chinamoney_fx_swap_cache.json"
+    Path(__file__).resolve().parent / ".chinamoney_usdcny_swap_cache.json"
 )
 
 
