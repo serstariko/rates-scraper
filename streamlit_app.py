@@ -353,13 +353,13 @@ def main() -> None:
         "Данные загружаются автоматически при открытии страницы, обновляются каждый час и по кнопке **Обновить сейчас**."
     )
     with st.expander("Авторизация Cbonds (для закрытых источников)", expanded=False):
-        st.text_input(
+        cbonds_login = st.text_input(
             "Логин Cbonds",
             key="cbonds_login",
             autocomplete="username",
             help="Нужен для источников с parser=cbonds_index_rate.",
         )
-        st.text_input(
+        cbonds_password = st.text_input(
             "Пароль Cbonds",
             type="password",
             key="cbonds_password",
@@ -399,13 +399,32 @@ def main() -> None:
     elif st_autorefresh is not None and auto_tick != st.session_state.last_auto_tick:
         refresh_reason = "hourly"
 
-    cbonds_login = str(st.session_state.get("cbonds_login", "")).strip()
-    cbonds_password = str(st.session_state.get("cbonds_password", "")).strip()
+    cbonds_login = str(cbonds_login).strip()
+    cbonds_password = str(cbonds_password).strip()
     cbonds_credentials: tuple[str, str] | None = None
     if cbonds_login and cbonds_password:
         cbonds_credentials = (cbonds_login, cbonds_password)
     elif cbonds_login or cbonds_password:
         st.warning("Для Cbonds укажите и логин, и пароль (или оставьте оба поля пустыми).")
+
+    if (
+        refresh_reason is None
+        and cbonds_credentials is not None
+        and not st.session_state.results.empty
+        and "parser" in st.session_state.results.columns
+    ):
+        cbonds_rows = st.session_state.results[
+            st.session_state.results["parser"] == "cbonds_index_rate"
+        ]
+        if not cbonds_rows.empty and "details" in cbonds_rows.columns:
+            cbonds_details_text = " ".join(
+                cbonds_rows["details"].fillna("").astype(str).tolist()
+            ).lower()
+            if (
+                "логин/пароль не указаны" in cbonds_details_text
+                or "логин и пароль не должны быть пустыми" in cbonds_details_text
+            ):
+                refresh_reason = "cbonds_credentials_updated"
 
     if refresh_reason:
         _refresh_results(source_configs, refresh_reason, cbonds_credentials=cbonds_credentials)
@@ -418,6 +437,7 @@ def main() -> None:
             "initial": "первичная загрузка",
             "manual": "ручное обновление",
             "hourly": "автообновление (1 час)",
+            "cbonds_credentials_updated": "автообновление после ввода Cbonds-учётных данных",
         }
         refreshed_at = st.session_state.last_refresh_at_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
         refresh_label = reason_labels.get(st.session_state.last_refresh_reason, "обновление")
