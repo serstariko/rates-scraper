@@ -23,6 +23,7 @@ MOEX_ISS_INDEX_SECIDS = {
     "rusfar_rate": "RUSFAR",
     "rusfar3m_rate": "RUSFAR3M",
     "rusfarcny_rate": "RUSFARCNY",
+    "oisfx_rate": "OISFIXUSD",
 }
 NFEASWAP_TENOR_PARSERS = {
     "nfeaswap_1w_rate": "1W",

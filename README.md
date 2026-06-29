@@ -4,7 +4,7 @@
 
 ## Возможности
 
-- Фиксированный список источников по запросу: ключевая ставка ЦБ РФ, RUONIA, FR007, RUSFAR, RUSFAR3M, RUSFARCNY, SOFR, CME SOFR OIS (1Y-10Y, расчётные 4Y/6Y/7Y/8Y/9Y по линейной интерполяции), NFEASWAP (1W-1Y), ESTER, EURIBOR 1M/3M/6M.
+- Фиксированный список источников по запросу: ключевая ставка ЦБ РФ, RUONIA, FR007, RUSFAR, RUSFAR3M, RUSFARCNY, OISFX, SOFR, CME SOFR OIS (1Y-10Y, расчётные 4Y/6Y/7Y/8Y/9Y по линейной интерполяции), NFEASWAP (1W-1Y), ESTER, EURIBOR 1M/3M/6M.
 - Автоматическая загрузка данных при открытии страницы.
 - Автообновление данных каждый час.
 - Ручное обновление кнопкой **Обновить сейчас**.
@@ -16,6 +16,7 @@
   - `rusfar_rate` (MOEX ISS: индекс RUSFAR, поле `CURRENTVALUE`)
   - `rusfar3m_rate` (MOEX ISS: индекс RUSFAR3M, поле `CURRENTVALUE`)
   - `rusfarcny_rate` (MOEX ISS: индекс RUSFARCNY, поле `CURRENTVALUE`)
+  - `oisfx_rate` (MOEX ISS: индекс OISFIXUSD, поле `CURRENTVALUE`)
   - `sofr_rate` (NY Fed Markets API: SOFR, поле `dailyRate`)
   - `cme_sofr_swap_1y_rate` (CME Cleared SOFR Swaps, срок 1Y)
   - `cme_sofr_swap_2y_rate` (CME Cleared SOFR Swaps, срок 2Y)

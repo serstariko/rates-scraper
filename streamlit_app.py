@@ -45,6 +45,11 @@ DEFAULT_SOURCES = [
         "parser": "rusfarcny_rate",
     },
     {
+        "name": "MOEX — OISFX (OISFIXUSD)",
+        "url": "https://www.moex.com/ru/index/OISFIXUSD",
+        "parser": "oisfx_rate",
+    },
+    {
         "name": "NY Fed — SOFR",
         "url": "https://www.newyorkfed.org/markets/reference-rates/sofr",
         "parser": "sofr_rate",
@@ -238,7 +243,7 @@ def main() -> None:
     st.title("Парсер процентных ставок с выгрузкой в Excel")
     st.write(
         "Используется фиксированный список источников: ключевая ставка ЦБ РФ, RUONIA, FR007, "
-        "RUSFAR, RUSFAR3M, RUSFARCNY, SOFR, CME SOFR OIS (1Y-10Y, с интерполяцией 4Y/6Y/7Y/8Y/9Y), "
+        "RUSFAR, RUSFAR3M, RUSFARCNY, OISFX, SOFR, CME SOFR OIS (1Y-10Y, с интерполяцией 4Y/6Y/7Y/8Y/9Y), "
         "NFEASWAP (1W-1Y), "
         "ESTER и EURIBOR 1M/3M/6M. "
         "Данные загружаются автоматически при открытии страницы, обновляются каждый час и по кнопке **Обновить сейчас**."
