@@ -1087,23 +1087,41 @@ def _parse_cbonds_index_rate(
     source_url: str, cbonds_credentials: tuple[str, str] | None
 ) -> ParsedRate:
     if cbonds_credentials is None:
-        raise ValueError("Cbonds: укажите логин и пароль в настройках авторизации.")
+        return _build_parsed_rate(
+            current_rate=None,
+            current_date=None,
+            previous_rate=None,
+            previous_date=None,
+            details=(
+                "Cbonds: логин/пароль не указаны. "
+                "Заполните блок «Авторизация Cbonds» в UI."
+            ),
+        )
 
     login, password = cbonds_credentials
     if not login.strip() or not password.strip():
-        raise ValueError("Cbonds: логин и пароль не должны быть пустыми.")
+        return _build_parsed_rate(
+            current_rate=None,
+            current_date=None,
+            previous_rate=None,
+            previous_date=None,
+            details="Cbonds: логин и пароль не должны быть пустыми.",
+        )
 
     with _build_http_session() as session:
         request_headers = {"User-Agent": USER_AGENT, "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8"}
         session.get(CBONDS_LOGIN_URL, timeout=25, headers=request_headers)
-        login_response = session.post(
-            CBONDS_LOGIN_URL,
-            data={"login": login, "password": password},
-            timeout=25,
-            headers={**request_headers, "Referer": CBONDS_LOGIN_URL},
-            allow_redirects=True,
-        )
-        login_response.raise_for_status()
+
+        # На Cbonds встречаются разные точки входа для формы login/password.
+        for login_url in (CBONDS_LOGIN_URL, source_url):
+            login_response = session.post(
+                login_url,
+                data={"login": login, "password": password},
+                timeout=25,
+                headers={**request_headers, "Referer": login_url},
+                allow_redirects=True,
+            )
+            login_response.raise_for_status()
 
         index_response = session.get(
             source_url,
@@ -1114,9 +1132,6 @@ def _parse_cbonds_index_rate(
         index_html = index_response.text
 
     user_auth = _extract_cbonds_user_auth(index_html)
-    if user_auth == 0:
-        raise ValueError("Cbonds: авторизация не подтверждена (проверьте логин/пароль).")
-
     index_info = _extract_cbonds_index_info(index_html)
     current_rate = _parse_cbonds_rate_value(index_info.get("actual_value"))
     previous_rate = _parse_cbonds_rate_value(index_info.get("prev_value"))
@@ -1127,8 +1142,17 @@ def _parse_cbonds_index_rate(
         index_name = "Cbonds Index"
 
     if current_rate is None:
-        raise ValueError(
-            "Cbonds: значение ставки скрыто или недоступно для текущего уровня доступа."
+        auth_hint = (
+            "авторизация не подтверждена (проверьте логин/пароль)"
+            if user_auth == 0
+            else "значение скрыто или недоступно для текущего уровня доступа"
+        )
+        return _build_parsed_rate(
+            current_rate=None,
+            current_date=current_date if isinstance(current_date, str) else None,
+            previous_rate=previous_rate,
+            previous_date=previous_date if isinstance(previous_date, str) else None,
+            details=f"{index_name} (Cbonds): {auth_hint}.",
         )
 
     return _build_parsed_rate(
