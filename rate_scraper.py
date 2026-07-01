@@ -1083,9 +1083,61 @@ def _extract_cbonds_user_auth(index_html: str) -> int | None:
     return int(match.group(1))
 
 
+def _extract_cbonds_index_id(source_url: str) -> str | None:
+    match = re.search(r"/indexes/(\d+)/?", source_url)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _parse_cbonds_import_index_rate(
+    source_url: str, cbonds_import_data: dict[str, dict[str, Any]]
+) -> ParsedRate | None:
+    index_id = _extract_cbonds_index_id(source_url)
+    if index_id is None:
+        return None
+    imported_row = cbonds_import_data.get(index_id)
+    if imported_row is None:
+        return None
+
+    current_rate = _to_float(imported_row.get("value"))
+    previous_rate = _to_float(imported_row.get("previous_value"))
+    current_date_raw = imported_row.get("date")
+    previous_date_raw = imported_row.get("previous_date")
+    current_date = current_date_raw if isinstance(current_date_raw, str) else None
+    previous_date = previous_date_raw if isinstance(previous_date_raw, str) else None
+
+    return _build_parsed_rate(
+        current_rate=current_rate,
+        current_date=current_date,
+        previous_rate=previous_rate,
+        previous_date=previous_date,
+        details=f"Cbonds import file (ID индекса {index_id}).",
+    )
+
+
 def _parse_cbonds_index_rate(
-    source_url: str, cbonds_credentials: tuple[str, str] | None
+    source_url: str,
+    cbonds_credentials: tuple[str, str] | None,
+    cbonds_import_data: dict[str, dict[str, Any]] | None = None,
+    cbonds_allow_web_fetch: bool = True,
 ) -> ParsedRate:
+    if cbonds_import_data:
+        imported = _parse_cbonds_import_index_rate(source_url, cbonds_import_data)
+        if imported is not None:
+            return imported
+
+    if not cbonds_allow_web_fetch:
+        index_id = _extract_cbonds_index_id(source_url)
+        id_part = f" (ID {index_id})" if index_id is not None else ""
+        return _build_parsed_rate(
+            current_rate=None,
+            current_date=None,
+            previous_rate=None,
+            previous_date=None,
+            details=f"Cbonds{id_part}: веб-загрузка отключена и в импорт-файле индекс не найден.",
+        )
+
     if cbonds_credentials is None:
         return _build_parsed_rate(
             current_rate=None,
@@ -1207,7 +1259,10 @@ def fetch_html(url: str, timeout: int = 25) -> str:
 
 
 def scrape_source(
-    source: SourceConfig, cbonds_credentials: tuple[str, str] | None = None
+    source: SourceConfig,
+    cbonds_credentials: tuple[str, str] | None = None,
+    cbonds_import_data: dict[str, dict[str, Any]] | None = None,
+    cbonds_allow_web_fetch: bool = True,
 ) -> dict[str, str | float | None]:
     collected_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
     parser = PARSERS.get(source.parser, PARSERS["generic"])
@@ -1233,7 +1288,12 @@ def scrape_source(
         elif source.parser == "fr007_rate":
             parsed = _parse_fr007_rate()
         elif source.parser == "cbonds_index_rate":
-            parsed = _parse_cbonds_index_rate(source.url, cbonds_credentials)
+            parsed = _parse_cbonds_index_rate(
+                source.url,
+                cbonds_credentials,
+                cbonds_import_data=cbonds_import_data,
+                cbonds_allow_web_fetch=cbonds_allow_web_fetch,
+            )
         else:
             html = fetch_html(source.url)
             parsed = parser(html)
@@ -1282,7 +1342,18 @@ def scrape_source(
 
 
 def scrape_all_sources(
-    sources: list[SourceConfig], cbonds_credentials: tuple[str, str] | None = None
+    sources: list[SourceConfig],
+    cbonds_credentials: tuple[str, str] | None = None,
+    cbonds_import_data: dict[str, dict[str, Any]] | None = None,
+    cbonds_allow_web_fetch: bool = True,
 ) -> pd.DataFrame:
-    rows = [scrape_source(source, cbonds_credentials=cbonds_credentials) for source in sources]
+    rows = [
+        scrape_source(
+            source,
+            cbonds_credentials=cbonds_credentials,
+            cbonds_import_data=cbonds_import_data,
+            cbonds_allow_web_fetch=cbonds_allow_web_fetch,
+        )
+        for source in sources
+    ]
     return pd.DataFrame(rows)

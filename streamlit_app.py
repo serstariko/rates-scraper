@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import io
 from io import BytesIO
 import json
 from pathlib import Path
@@ -297,10 +298,15 @@ def _refresh_results(
     source_configs: list[SourceConfig],
     reason: str,
     cbonds_credentials: tuple[str, str] | None = None,
+    cbonds_import_data: dict[str, dict[str, object]] | None = None,
+    cbonds_allow_web_fetch: bool = True,
 ) -> None:
     with st.spinner("Идёт сбор данных..."):
         st.session_state.results = scrape_all_sources(
-            source_configs, cbonds_credentials=cbonds_credentials
+            source_configs,
+            cbonds_credentials=cbonds_credentials,
+            cbonds_import_data=cbonds_import_data,
+            cbonds_allow_web_fetch=cbonds_allow_web_fetch,
         )
     st.session_state.last_refresh_at_utc = datetime.now(timezone.utc)
     st.session_state.last_refresh_reason = reason
@@ -328,6 +334,129 @@ def _format_timestamp_moscow(value: object) -> str:
 def _table_height(row_count: int, max_height: int = 1800) -> int:
     visible_rows = max(row_count, 1)
     return min(48 + visible_rows * 35, max_height)
+
+
+def _normalize_cbonds_column_name(value: str) -> str:
+    return (
+        value.lower()
+        .replace("ё", "е")
+        .replace(" ", "")
+        .replace("_", "")
+        .replace(".", "")
+        .replace("-", "")
+    )
+
+
+def _extract_cbonds_import_date(value: object) -> str | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    if isinstance(value, datetime):
+        return value.strftime("%d.%m.%Y")
+    if isinstance(value, pd.Timestamp):
+        return value.to_pydatetime().strftime("%d.%m.%Y")
+    text = str(value).strip()
+    if not text:
+        return None
+    parsed = _format_calendar_date(text)
+    return parsed
+
+
+def _extract_cbonds_import_float(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and pd.isna(value):
+            return None
+        return float(value)
+    text = str(value).strip().replace(" ", "").replace("%", "").replace(",", ".")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _find_cbonds_import_column(
+    dataframe: pd.DataFrame, aliases: list[str]
+) -> str | None:
+    normalized_aliases = {_normalize_cbonds_column_name(alias) for alias in aliases}
+    for column in dataframe.columns:
+        normalized_column = _normalize_cbonds_column_name(str(column))
+        if normalized_column in normalized_aliases:
+            return column
+    return None
+
+
+def _parse_cbonds_import_file(
+    uploaded_file,
+) -> tuple[dict[str, dict[str, object]], list[str]]:
+    try:
+        file_name = str(uploaded_file.name).lower()
+        if file_name.endswith(".csv"):
+            file_bytes = uploaded_file.getvalue()
+            decoded: str | None = None
+            for encoding in ("utf-8-sig", "cp1251", "utf-16"):
+                try:
+                    decoded = file_bytes.decode(encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if decoded is None:
+                return {}, ["Не удалось прочитать CSV: неподдерживаемая кодировка."]
+            dataframe = pd.read_csv(io.StringIO(decoded), sep=None, engine="python")
+        else:
+            dataframe = pd.read_excel(uploaded_file)
+    except Exception as exc:  # noqa: BLE001
+        return {}, [f"Ошибка чтения файла Cbonds: {exc}"]
+
+    if dataframe.empty:
+        return {}, ["Импорт-файл Cbonds пустой."]
+
+    id_column = _find_cbonds_import_column(dataframe, ["ID индекса", "id индекса", "index id", "id"])
+    value_column = _find_cbonds_import_column(dataframe, ["Значение", "value", "последнее значение"])
+    date_column = _find_cbonds_import_column(dataframe, ["Дата", "date"])
+    abs_change_column = _find_cbonds_import_column(dataframe, ["Абс. изм.", "Абс изм", "abs change"])
+
+    if id_column is None or value_column is None or date_column is None:
+        return {}, [
+            "В файле не найдены обязательные колонки: ID индекса, Значение, Дата."
+        ]
+
+    parsed: dict[str, dict[str, object]] = {}
+    errors: list[str] = []
+    for row in dataframe.to_dict("records"):
+        raw_id = row.get(id_column)
+        if raw_id is None or (isinstance(raw_id, float) and pd.isna(raw_id)):
+            continue
+        try:
+            index_id = str(int(float(str(raw_id).strip()))).strip()
+        except ValueError:
+            errors.append(f"Некорректный ID индекса: {raw_id}")
+            continue
+
+        current_value = _extract_cbonds_import_float(row.get(value_column))
+        current_date = _extract_cbonds_import_date(row.get(date_column))
+        abs_change = (
+            _extract_cbonds_import_float(row.get(abs_change_column))
+            if abs_change_column is not None
+            else None
+        )
+
+        previous_value = None
+        if current_value is not None and abs_change is not None:
+            previous_value = current_value - abs_change
+
+        parsed[index_id] = {
+            "value": current_value,
+            "date": current_date,
+            "previous_value": previous_value,
+            "previous_date": None,
+        }
+
+    if not parsed:
+        errors.append("В файле нет валидных строк с ID индекса.")
+    return parsed, errors
 
 
 def _parse_ddmmyyyy_date(value: object) -> datetime.date | None:
@@ -825,6 +954,15 @@ def main() -> None:
             key="load_cbonds_enabled",
             help="По умолчанию отключено. Включите, если нужно обновлять строки Cbonds.",
         )
+        cbonds_import_file = st.file_uploader(
+            "Импорт файла Cbonds (XLSX/XLS/CSV)",
+            type=["xlsx", "xls", "csv"],
+            key="cbonds_import_file",
+            help=(
+                "Файл должен содержать колонки ID индекса, Значение, Дата "
+                "(Абс. изм. — опционально)."
+            ),
+        )
         cbonds_login = st.text_input(
             "Логин Cbonds",
             key="cbonds_login",
@@ -842,6 +980,17 @@ def main() -> None:
         st.caption(
             "Учётные данные используются только для текущего запуска обновления и не выгружаются в результаты."
         )
+
+    cbonds_import_data: dict[str, dict[str, object]] | None = None
+    cbonds_import_errors: list[str] = []
+    if cbonds_import_file is not None:
+        cbonds_import_data, cbonds_import_errors = _parse_cbonds_import_file(cbonds_import_file)
+        if cbonds_import_errors:
+            st.warning("Импорт Cbonds: " + "; ".join(cbonds_import_errors[:4]))
+        else:
+            st.caption(
+                f"Импорт Cbonds: загружено индексов — {len(cbonds_import_data)}."
+            )
 
     if "results" not in st.session_state:
         st.session_state.results = pd.DataFrame()
@@ -866,7 +1015,8 @@ def main() -> None:
     refresh_now = st.button("Обновить сейчас", type="primary", use_container_width=True)
 
     source_configs = _fixed_source_configs()
-    if not load_cbonds_enabled:
+    cbonds_import_available = cbonds_import_data is not None and bool(cbonds_import_data)
+    if not load_cbonds_enabled and not cbonds_import_available:
         source_configs = [
             source for source in source_configs if source.parser != "cbonds_index_rate"
         ]
@@ -919,7 +1069,13 @@ def main() -> None:
                 refresh_reason = "cbonds_credentials_updated"
 
     if refresh_reason:
-        _refresh_results(source_configs, refresh_reason, cbonds_credentials=cbonds_credentials)
+        _refresh_results(
+            source_configs,
+            refresh_reason,
+            cbonds_credentials=cbonds_credentials,
+            cbonds_import_data=cbonds_import_data,
+            cbonds_allow_web_fetch=load_cbonds_enabled,
+        )
         st.success(f"Собрано источников: {len(st.session_state.results)}")
 
     st.session_state.last_auto_tick = auto_tick
