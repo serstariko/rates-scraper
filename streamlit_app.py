@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from io import BytesIO
+import json
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -101,6 +103,17 @@ RECOMMENDED_EXTRA_SOURCES = [
 
 AUTO_REFRESH_MIN_OPTIONS = [5, 15, 30, 60, 120]
 DEFAULT_AUTO_REFRESH_MINUTES = 60
+CALENDAR_COLUMNS = [
+    "Beijing",
+    "Europe",
+    "NewYork",
+    "RUONIA",
+    "RUSFAR",
+    "RUSFARCNY",
+    "MOSCOW",
+    "SPFI",
+]
+HOLIDAY_CALENDARS_PATH = Path(__file__).resolve().parent / ".holiday_calendars.json"
 
 
 def _to_excel_bytes(dataframe: pd.DataFrame) -> bytes:
@@ -162,12 +175,126 @@ def _refresh_results(source_configs: list[SourceConfig], reason: str) -> None:
     st.session_state.last_refresh_reason = reason
 
 
+def _format_calendar_date(value: str) -> str | None:
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+
+    known_formats = (
+        "%d.%m.%Y",
+        "%Y-%m-%d",
+        "%d-%m-%Y",
+        "%d/%m/%Y",
+        "%Y/%m/%d",
+    )
+    for date_format in known_formats:
+        try:
+            parsed = datetime.strptime(cleaned, date_format)
+            return parsed.strftime("%d.%m.%Y")
+        except ValueError:
+            continue
+    return None
+
+
+def _calendar_dict_to_dataframe(calendars: dict[str, list[str]]) -> pd.DataFrame:
+    normalized: dict[str, list[str]] = {}
+    max_len = 0
+    for column in CALENDAR_COLUMNS:
+        values = calendars.get(column, [])
+        unique_values = sorted(
+            {value for value in values if value},
+            key=lambda value: datetime.strptime(value, "%d.%m.%Y"),
+        )
+        normalized[column] = unique_values
+        max_len = max(max_len, len(unique_values))
+
+    if max_len == 0:
+        max_len = 1
+
+    table_data: dict[str, list[str]] = {}
+    for column in CALENDAR_COLUMNS:
+        column_values = normalized[column]
+        table_data[column] = column_values + [""] * (max_len - len(column_values))
+    return pd.DataFrame(table_data)
+
+
+def _calendar_dataframe_to_dict(
+    dataframe: pd.DataFrame,
+) -> tuple[dict[str, list[str]], list[str]]:
+    calendars: dict[str, list[str]] = {column: [] for column in CALENDAR_COLUMNS}
+    invalid_values: list[str] = []
+
+    for column in CALENDAR_COLUMNS:
+        if column not in dataframe.columns:
+            continue
+        values_for_column: set[str] = set()
+        for raw_value in dataframe[column].tolist():
+            if pd.isna(raw_value):
+                continue
+            text_value = str(raw_value).strip()
+            if not text_value:
+                continue
+            formatted_value = _format_calendar_date(text_value)
+            if formatted_value is None:
+                invalid_values.append(f"{column}: {text_value}")
+                continue
+            values_for_column.add(formatted_value)
+        calendars[column] = sorted(
+            values_for_column, key=lambda value: datetime.strptime(value, "%d.%m.%Y")
+        )
+
+    return calendars, invalid_values
+
+
+def _load_holiday_calendars() -> dict[str, list[str]]:
+    try:
+        raw_text = HOLIDAY_CALENDARS_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {column: [] for column in CALENDAR_COLUMNS}
+    except OSError:
+        return {column: [] for column in CALENDAR_COLUMNS}
+
+    try:
+        payload = json.loads(raw_text)
+    except json.JSONDecodeError:
+        return {column: [] for column in CALENDAR_COLUMNS}
+
+    if not isinstance(payload, dict):
+        return {column: [] for column in CALENDAR_COLUMNS}
+
+    cleaned_payload: dict[str, list[str]] = {column: [] for column in CALENDAR_COLUMNS}
+    for column in CALENDAR_COLUMNS:
+        values = payload.get(column, [])
+        if not isinstance(values, list):
+            continue
+        formatted_values: set[str] = set()
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            formatted = _format_calendar_date(value)
+            if formatted:
+                formatted_values.add(formatted)
+        cleaned_payload[column] = sorted(
+            formatted_values, key=lambda date_value: datetime.strptime(date_value, "%d.%m.%Y")
+        )
+    return cleaned_payload
+
+
+def _save_holiday_calendars(calendars: dict[str, list[str]]) -> None:
+    normalized_payload = {column: calendars.get(column, []) for column in CALENDAR_COLUMNS}
+    HOLIDAY_CALENDARS_PATH.write_text(
+        json.dumps(normalized_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 def main() -> None:
     st.set_page_config(page_title="Парсер процентных ставок", layout="wide")
     st.title("Парсер процентных ставок с выгрузкой в Excel")
     st.write(
         "Добавьте сайты-источники ставок: данные загружаются автоматически при открытии страницы, "
-        "обновляются каждый час и по кнопке **Обновить сейчас**."
+        "обновляются каждый час и по кнопке **Обновить сейчас**. "
+        "Во вкладке **Календари** можно редактировать списки праздничных дат."
     )
 
     if "sources" not in st.session_state:
@@ -186,125 +313,198 @@ def main() -> None:
         st.session_state.auto_refresh_enabled = True
     if "auto_refresh_minutes" not in st.session_state:
         st.session_state.auto_refresh_minutes = DEFAULT_AUTO_REFRESH_MINUTES
+    if "holiday_calendars" not in st.session_state:
+        st.session_state.holiday_calendars = _calendar_dict_to_dataframe(_load_holiday_calendars())
 
-    auto_tick = 0
-    if st.session_state.auto_refresh_enabled and st_autorefresh is not None:
-        auto_tick = st_autorefresh(
-            interval=st.session_state.auto_refresh_minutes * 60 * 1000,
-            key="rates_auto_refresh",
-        )
-    elif st.session_state.auto_refresh_enabled and st_autorefresh is None:
-        st.warning(
-            "Пакет streamlit-autorefresh не установлен: автообновление раз в час отключено. "
-            "Работает только ручное обновление."
+    parsing_tab, calendars_tab = st.tabs(["Парсинг ставок", "Календари"])
+
+    with parsing_tab:
+        auto_tick = 0
+        if st.session_state.auto_refresh_enabled and st_autorefresh is not None:
+            auto_tick = st_autorefresh(
+                interval=st.session_state.auto_refresh_minutes * 60 * 1000,
+                key="rates_auto_refresh",
+            )
+        elif st.session_state.auto_refresh_enabled and st_autorefresh is None:
+            st.warning(
+                "Пакет streamlit-autorefresh не установлен: автообновление раз в час отключено. "
+                "Работает только ручное обновление."
+            )
+
+        left, middle, right = st.columns([1, 1.3, 2.2])
+        with left:
+            refresh_now = st.button("Обновить сейчас", type="primary", use_container_width=True)
+        with middle:
+            add_sources = st.button("Добавить новые источники", use_container_width=True)
+        with right:
+            st.caption("Для неизвестных сайтов используйте parser = generic.")
+
+        with st.expander("Настройки автообновления", expanded=False):
+            st.checkbox("Включить автообновление", key="auto_refresh_enabled")
+            st.selectbox(
+                "Интервал обновления (минуты)",
+                options=AUTO_REFRESH_MIN_OPTIONS,
+                key="auto_refresh_minutes",
+            )
+
+        if add_sources:
+            updated_sources, added_count = _append_missing_sources(
+                st.session_state.sources, RECOMMENDED_EXTRA_SOURCES
+            )
+            st.session_state.sources = updated_sources
+            if added_count:
+                st.success(f"Добавлено источников: {added_count}")
+            else:
+                st.info("Все рекомендованные источники уже есть в таблице.")
+            st.rerun()
+
+        source_editor = st.data_editor(
+            st.session_state.sources,
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "name": st.column_config.TextColumn("Название источника", required=True),
+                "url": st.column_config.TextColumn("URL", required=True),
+                "parser": st.column_config.SelectboxColumn(
+                    "Парсер",
+                    options=[
+                        "cbr_key_rate",
+                        "ruonia_rate",
+                        "ecb_key_rates",
+                        "boe_bank_rate",
+                        "ester_rate",
+                        "euribor_1m_rate",
+                        "euribor_3m_rate",
+                        "euribor_6m_rate",
+                        "generic",
+                    ],
+                    required=True,
+                ),
+            },
+            key="sources_editor",
         )
 
-    left, middle, right = st.columns([1, 1.3, 2.2])
-    with left:
-        refresh_now = st.button("Обновить сейчас", type="primary", use_container_width=True)
-    with middle:
-        add_sources = st.button("Добавить новые источники", use_container_width=True)
-    with right:
-        st.caption("Для неизвестных сайтов используйте parser = generic.")
+        st.session_state.sources = source_editor
+        source_configs = _prepare_sources(source_editor)
+        current_signature = _sources_signature(source_configs)
+        previous_signature = st.session_state.sources_signature
 
-    with st.expander("Настройки автообновления", expanded=False):
-        st.checkbox("Включить автообновление", key="auto_refresh_enabled")
-        st.selectbox(
-            "Интервал обновления (минуты)",
-            options=AUTO_REFRESH_MIN_OPTIONS,
-            key="auto_refresh_minutes",
-        )
+        refresh_reason: str | None = None
+        if st.session_state.results.empty:
+            refresh_reason = "initial"
+        elif refresh_now:
+            refresh_reason = "manual"
+        elif (
+            st.session_state.auto_refresh_enabled
+            and st_autorefresh is not None
+            and auto_tick != st.session_state.last_auto_tick
+        ):
+            refresh_reason = "auto"
+        elif previous_signature is not None and current_signature != previous_signature:
+            refresh_reason = "sources_changed"
 
-    if add_sources:
-        updated_sources, added_count = _append_missing_sources(
-            st.session_state.sources, RECOMMENDED_EXTRA_SOURCES
-        )
-        st.session_state.sources = updated_sources
-        if added_count:
-            st.success(f"Добавлено источников: {added_count}")
+        if refresh_reason:
+            if not source_configs:
+                st.session_state.results = pd.DataFrame()
+                st.warning("Добавьте хотя бы один валидный источник.")
+            else:
+                _refresh_results(source_configs, refresh_reason)
+                st.success(f"Собрано источников: {len(st.session_state.results)}")
+
+        st.session_state.sources_signature = current_signature
+        st.session_state.last_auto_tick = auto_tick
+
+        if st.session_state.last_refresh_at_utc is not None:
+            reason_labels = {
+                "initial": "первичная загрузка",
+                "manual": "ручное обновление",
+                "auto": f"автообновление ({st.session_state.auto_refresh_minutes} мин.)",
+                "sources_changed": "изменение списка источников",
+            }
+            refreshed_at = st.session_state.last_refresh_at_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
+            refresh_label = reason_labels.get(st.session_state.last_refresh_reason, "обновление")
+            st.caption(f"Последнее обновление: {refreshed_at} ({refresh_label}).")
+
+        results = st.session_state.results
+        if not results.empty:
+            st.subheader("Результаты парсинга")
+            st.dataframe(results, use_container_width=True)
+            st.download_button(
+                label="Скачать Excel",
+                data=_to_excel_bytes(results),
+                file_name="interest_rates.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
         else:
-            st.info("Все рекомендованные источники уже есть в таблице.")
-        st.rerun()
+            st.info("Результаты появятся после запуска парсинга.")
 
-    source_editor = st.data_editor(
-        st.session_state.sources,
-        num_rows="dynamic",
-        use_container_width=True,
-        column_config={
-            "name": st.column_config.TextColumn("Название источника", required=True),
-            "url": st.column_config.TextColumn("URL", required=True),
-            "parser": st.column_config.SelectboxColumn(
-                "Парсер",
-                options=[
-                    "cbr_key_rate",
-                    "ruonia_rate",
-                    "ecb_key_rates",
-                    "boe_bank_rate",
-                    "ester_rate",
-                    "euribor_1m_rate",
-                    "euribor_3m_rate",
-                    "euribor_6m_rate",
-                    "generic",
-                ],
-                required=True,
-            ),
-        },
-        key="sources_editor",
-    )
-
-    st.session_state.sources = source_editor
-    source_configs = _prepare_sources(source_editor)
-    current_signature = _sources_signature(source_configs)
-    previous_signature = st.session_state.sources_signature
-
-    refresh_reason: str | None = None
-    if st.session_state.results.empty:
-        refresh_reason = "initial"
-    elif refresh_now:
-        refresh_reason = "manual"
-    elif (
-        st.session_state.auto_refresh_enabled
-        and st_autorefresh is not None
-        and auto_tick != st.session_state.last_auto_tick
-    ):
-        refresh_reason = "auto"
-    elif previous_signature is not None and current_signature != previous_signature:
-        refresh_reason = "sources_changed"
-
-    if refresh_reason:
-        if not source_configs:
-            st.session_state.results = pd.DataFrame()
-            st.warning("Добавьте хотя бы один валидный источник.")
-        else:
-            _refresh_results(source_configs, refresh_reason)
-            st.success(f"Собрано источников: {len(st.session_state.results)}")
-
-    st.session_state.sources_signature = current_signature
-    st.session_state.last_auto_tick = auto_tick
-
-    if st.session_state.last_refresh_at_utc is not None:
-        reason_labels = {
-            "initial": "первичная загрузка",
-            "manual": "ручное обновление",
-            "auto": f"автообновление ({st.session_state.auto_refresh_minutes} мин.)",
-            "sources_changed": "изменение списка источников",
-        }
-        refreshed_at = st.session_state.last_refresh_at_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
-        refresh_label = reason_labels.get(st.session_state.last_refresh_reason, "обновление")
-        st.caption(f"Последнее обновление: {refreshed_at} ({refresh_label}).")
-
-    results = st.session_state.results
-    if not results.empty:
-        st.subheader("Результаты парсинга")
-        st.dataframe(results, use_container_width=True)
-        st.download_button(
-            label="Скачать Excel",
-            data=_to_excel_bytes(results),
-            file_name="interest_rates.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    with calendars_tab:
+        st.subheader("Календари праздничных дней")
+        st.caption(
+            "Суббота и воскресенье считаются выходными автоматически. "
+            "В таблице ниже указываются только дополнительные праздничные даты."
         )
-    else:
-        st.info("Результаты появятся после запуска парсинга.")
+        calendars_editor = st.data_editor(
+            st.session_state.holiday_calendars,
+            num_rows="dynamic",
+            hide_index=True,
+            use_container_width=True,
+            key="holiday_calendars_editor",
+            column_config={
+                column: st.column_config.TextColumn(
+                    column,
+                    help="Формат даты: ДД.ММ.ГГГГ (также поддерживаются YYYY-MM-DD, DD/MM/YYYY).",
+                )
+                for column in CALENDAR_COLUMNS
+            },
+        )
+        st.session_state.holiday_calendars = calendars_editor
+
+        save_column, reload_column, hint_column = st.columns([1, 1, 2.5])
+        with save_column:
+            save_calendars = st.button(
+                "Сохранить календари",
+                type="primary",
+                use_container_width=True,
+                key="save_holiday_calendars_button",
+            )
+        with reload_column:
+            reload_calendars = st.button(
+                "Перезагрузить из файла",
+                use_container_width=True,
+                key="reload_holiday_calendars_button",
+            )
+        with hint_column:
+            st.caption("Добавляйте/удаляйте строки в таблице напрямую и затем нажимайте «Сохранить календари».")
+
+        if save_calendars:
+            normalized_calendars, invalid_values = _calendar_dataframe_to_dict(calendars_editor)
+            if invalid_values:
+                invalid_preview = ", ".join(invalid_values[:8])
+                if len(invalid_values) > 8:
+                    invalid_preview += ", ..."
+                st.error(
+                    "Найдены даты в некорректном формате. "
+                    f"Проверьте значения: {invalid_preview}"
+                )
+            else:
+                try:
+                    _save_holiday_calendars(normalized_calendars)
+                except OSError as exc:
+                    st.error(f"Не удалось сохранить календари: {exc}")
+                else:
+                    st.session_state.holiday_calendars = _calendar_dict_to_dataframe(
+                        normalized_calendars
+                    )
+                    st.success("Календари сохранены.")
+                    st.rerun()
+
+        if reload_calendars:
+            st.session_state.holiday_calendars = _calendar_dict_to_dataframe(
+                _load_holiday_calendars()
+            )
+            st.success("Календари загружены из файла.")
+            st.rerun()
 
 
 if __name__ == "__main__":
