@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 import json
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -264,6 +265,7 @@ DEFAULT_SOURCES = [
 ]
 
 AUTO_REFRESH_MS = 60 * 60 * 1000
+MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 CALENDAR_COLUMNS = [
     "Beijing",
     "Europe",
@@ -304,6 +306,30 @@ def _refresh_results(
     st.session_state.last_refresh_reason = reason
 
 
+def _format_timestamp_moscow(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text_value = str(value).strip()
+        if not text_value:
+            return ""
+        normalized = text_value.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return text_value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(MOSCOW_TZ).strftime("%d.%m.%Y %H:%M:%S")
+
+
+def _table_height(row_count: int, max_height: int = 1800) -> int:
+    visible_rows = max(row_count, 1)
+    return min(48 + visible_rows * 35, max_height)
+
+
 def _build_summary_results_table(results: pd.DataFrame) -> pd.DataFrame:
     summary_columns = [
         "source_name",
@@ -318,6 +344,10 @@ def _build_summary_results_table(results: pd.DataFrame) -> pd.DataFrame:
     ]
     existing_columns = [column for column in summary_columns if column in results.columns]
     summary = results[existing_columns].copy()
+    if "collected_at_utc" in summary.columns:
+        summary["collected_at_utc"] = summary["collected_at_utc"].apply(
+            _format_timestamp_moscow
+        )
     summary = summary.rename(
         columns={
             "source_name": "Источник",
@@ -328,7 +358,7 @@ def _build_summary_results_table(results: pd.DataFrame) -> pd.DataFrame:
             "absolute_change_percent": "Изменение (абс.)",
             "relative_change_percent": "Изменение (%)",
             "status": "Статус",
-            "collected_at_utc": "Собрано (UTC)",
+            "collected_at_utc": "Собрано (МСК)",
         }
     )
     return summary
@@ -351,7 +381,13 @@ def _build_technical_results_table(results: pd.DataFrame) -> pd.DataFrame:
         "collected_at_utc",
     ]
     columns = [column for column in technical_columns_order if column in results.columns]
-    return results[columns].copy()
+    technical = results[columns].copy()
+    if "collected_at_utc" in technical.columns:
+        technical["collected_at_utc"] = technical["collected_at_utc"].apply(
+            _format_timestamp_moscow
+        )
+        technical = technical.rename(columns={"collected_at_utc": "collected_at_msk"})
+    return technical
 
 
 def _format_calendar_date(value: str) -> str | None:
@@ -641,17 +677,24 @@ def main() -> None:
         "Во вкладках **Календари** и **Маппинг ставок** можно настраивать праздничные даты и соответствие ставок календарям/сдвигам."
     )
     with st.expander("Авторизация Cbonds (для закрытых источников)", expanded=False):
+        load_cbonds_enabled = st.checkbox(
+            "Загружать данные из Cbonds",
+            key="load_cbonds_enabled",
+            help="По умолчанию отключено. Включите, если нужно обновлять строки Cbonds.",
+        )
         cbonds_login = st.text_input(
             "Логин Cbonds",
             key="cbonds_login",
             autocomplete="username",
             help="Нужен для источников с parser=cbonds_index_rate.",
+            disabled=not load_cbonds_enabled,
         )
         cbonds_password = st.text_input(
             "Пароль Cbonds",
             type="password",
             key="cbonds_password",
             autocomplete="current-password",
+            disabled=not load_cbonds_enabled,
         )
         st.caption(
             "Учётные данные используются только для текущего запуска обновления и не выгружаются в результаты."
@@ -680,6 +723,10 @@ def main() -> None:
     refresh_now = st.button("Обновить сейчас", type="primary", use_container_width=True)
 
     source_configs = _fixed_source_configs()
+    if not load_cbonds_enabled:
+        source_configs = [
+            source for source in source_configs if source.parser != "cbonds_index_rate"
+        ]
     source_names_for_mapping = [source.name for source in source_configs]
 
     if "rate_calendar_mapping" not in st.session_state:
@@ -699,16 +746,18 @@ def main() -> None:
     elif st_autorefresh is not None and auto_tick != st.session_state.last_auto_tick:
         refresh_reason = "hourly"
 
-    cbonds_login = str(cbonds_login).strip()
-    cbonds_password = str(cbonds_password).strip()
     cbonds_credentials: tuple[str, str] | None = None
-    if cbonds_login and cbonds_password:
-        cbonds_credentials = (cbonds_login, cbonds_password)
-    elif cbonds_login or cbonds_password:
-        st.warning("Для Cbonds укажите и логин, и пароль (или оставьте оба поля пустыми).")
+    if load_cbonds_enabled:
+        cbonds_login = str(cbonds_login).strip()
+        cbonds_password = str(cbonds_password).strip()
+        if cbonds_login and cbonds_password:
+            cbonds_credentials = (cbonds_login, cbonds_password)
+        elif cbonds_login or cbonds_password:
+            st.warning("Для Cbonds укажите и логин, и пароль (или оставьте оба поля пустыми).")
 
     if (
         refresh_reason is None
+        and load_cbonds_enabled
         and cbonds_credentials is not None
         and not st.session_state.results.empty
         and "parser" in st.session_state.results.columns
@@ -739,9 +788,9 @@ def main() -> None:
             "hourly": "автообновление (1 час)",
             "cbonds_credentials_updated": "автообновление после ввода Cbonds-учётных данных",
         }
-        refreshed_at = st.session_state.last_refresh_at_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
+        refreshed_at = _format_timestamp_moscow(st.session_state.last_refresh_at_utc)
         refresh_label = reason_labels.get(st.session_state.last_refresh_reason, "обновление")
-        st.caption(f"Последнее обновление: {refreshed_at} ({refresh_label}).")
+        st.caption(f"Последнее обновление: {refreshed_at} МСК ({refresh_label}).")
 
     rates_tab, calendars_tab, mapping_tab = st.tabs(
         ["Ставки", "Календари", "Маппинг ставок"]
@@ -782,6 +831,7 @@ def main() -> None:
                     summary_table,
                     use_container_width=True,
                     hide_index=True,
+                    height=_table_height(len(summary_table)),
                     column_config={
                         "Текущая ставка": st.column_config.NumberColumn(format="%.4f"),
                         "Предыдущая ставка": st.column_config.NumberColumn(format="%.4f"),
@@ -790,12 +840,17 @@ def main() -> None:
                     },
                 )
             with technical_tab:
-                st.dataframe(technical_table, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    technical_table,
+                    use_container_width=True,
+                    hide_index=True,
+                    height=_table_height(len(technical_table), max_height=2200),
+                )
 
             st.download_button(
                 label="Скачать Excel",
                 data=_to_excel_bytes(results),
-                file_name="interest_rates.xlsx",
+                file_name=f"OTC_MD_{datetime.now(MOSCOW_TZ).strftime('%d %m %Y')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         else:
@@ -812,6 +867,7 @@ def main() -> None:
             num_rows="dynamic",
             hide_index=True,
             use_container_width=True,
+            height=_table_height(len(st.session_state.holiday_calendars), max_height=1400),
             key="holiday_calendars_editor",
             column_config={
                 column: st.column_config.TextColumn(
@@ -883,6 +939,7 @@ def main() -> None:
             num_rows="fixed",
             hide_index=True,
             use_container_width=True,
+            height=_table_height(len(st.session_state.rate_calendar_mapping), max_height=1800),
             key="rate_calendar_mapping_editor",
             column_config={
                 "source_name": st.column_config.TextColumn("source_name", disabled=True),
