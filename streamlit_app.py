@@ -275,6 +275,8 @@ CALENDAR_COLUMNS = [
     "SPFI",
 ]
 HOLIDAY_CALENDARS_PATH = Path(__file__).resolve().parent / ".holiday_calendars.json"
+RATE_CALENDAR_MAPPING_PATH = Path(__file__).resolve().parent / ".rate_calendar_mapping.json"
+RATE_MAPPING_COLUMNS = ["source_name", "Calendar", "Shift"]
 
 
 def _to_excel_bytes(dataframe: pd.DataFrame) -> bytes:
@@ -465,6 +467,165 @@ def _save_holiday_calendars(calendars: dict[str, list[str]]) -> None:
     )
 
 
+def _default_rate_calendar_mapping(source_name: str) -> tuple[str, int]:
+    if source_name == "Ключевая ставка — ЦБ РФ":
+        return "MOSCOW", 0
+    if source_name == "RUONIA — ЦБ РФ":
+        return "RUONIA", -1
+    if source_name == "ChinaMoney — FR007":
+        return "Beijing", 0
+    if source_name.startswith("ChinaMoney USD/CNY Swap Point"):
+        return "SPFI", 0
+    if source_name.startswith("ChinaMoney EUR/USD Swap Point"):
+        return "SPFI", 0
+    if source_name.startswith("MOEX — RUSFAR"):
+        return "RUSFAR", 0
+    if source_name == "MOEX — OISFX (OISFIXUSD)":
+        return "MOSCOW/NewYork", -1
+    if source_name == "NY Fed — SOFR":
+        return "NewYork", -1
+    if source_name == "Cbonds — SOFR 1M (Index 72053)":
+        return "SPFI", 0
+    if source_name.startswith("CME SOFR OIS"):
+        return "SPFI", 0
+    if source_name.startswith("NFEASWAP"):
+        return "SPFI", 0
+    if source_name.startswith("ESTER"):
+        return "Europe", -1
+    if source_name.startswith("EURIBOR"):
+        return "Europe", -1
+    return "SPFI", 0
+
+
+def _to_int_shift(value: object, default: int | None = None) -> int | None:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    text_value = str(value).strip()
+    if not text_value:
+        return default
+    try:
+        return int(float(text_value))
+    except ValueError:
+        return default
+
+
+def _empty_rate_calendar_mapping_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=RATE_MAPPING_COLUMNS)
+
+
+def _load_rate_calendar_mapping() -> pd.DataFrame:
+    try:
+        raw_text = RATE_CALENDAR_MAPPING_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return _empty_rate_calendar_mapping_df()
+    except OSError:
+        return _empty_rate_calendar_mapping_df()
+
+    try:
+        payload = json.loads(raw_text)
+    except json.JSONDecodeError:
+        return _empty_rate_calendar_mapping_df()
+
+    if isinstance(payload, list):
+        return pd.DataFrame(payload)
+    if isinstance(payload, dict):
+        rows = []
+        for source_name, values in payload.items():
+            if not isinstance(values, dict):
+                continue
+            rows.append(
+                {
+                    "source_name": source_name,
+                    "Calendar": values.get("Calendar"),
+                    "Shift": values.get("Shift"),
+                }
+            )
+        return pd.DataFrame(rows)
+    return _empty_rate_calendar_mapping_df()
+
+
+def _sync_rate_calendar_mapping(
+    mapping_df: pd.DataFrame, source_names: list[str]
+) -> pd.DataFrame:
+    existing: dict[str, dict[str, object]] = {}
+    if not mapping_df.empty:
+        for row in mapping_df.to_dict("records"):
+            source_name = str(row.get("source_name", "")).strip()
+            if not source_name or source_name in existing:
+                continue
+            existing[source_name] = {
+                "Calendar": str(row.get("Calendar", "")).strip(),
+                "Shift": _to_int_shift(row.get("Shift"), default=None),
+            }
+
+    rows: list[dict[str, object]] = []
+    for source_name in source_names:
+        default_calendar, default_shift = _default_rate_calendar_mapping(source_name)
+        existing_row = existing.get(source_name, {})
+        calendar_value = str(existing_row.get("Calendar", "")).strip() or default_calendar
+        shift_value = _to_int_shift(existing_row.get("Shift"), default=default_shift)
+        if shift_value is None:
+            shift_value = default_shift
+        rows.append(
+            {
+                "source_name": source_name,
+                "Calendar": calendar_value,
+                "Shift": shift_value,
+            }
+        )
+    return pd.DataFrame(rows, columns=RATE_MAPPING_COLUMNS)
+
+
+def _save_rate_calendar_mapping(mapping_df: pd.DataFrame) -> None:
+    payload = mapping_df[RATE_MAPPING_COLUMNS].to_dict("records")
+    RATE_CALENDAR_MAPPING_PATH.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _validate_rate_calendar_mapping(
+    mapping_df: pd.DataFrame, source_names: list[str]
+) -> tuple[pd.DataFrame, list[str]]:
+    synced = _sync_rate_calendar_mapping(mapping_df, source_names)
+    errors: list[str] = []
+
+    for row in synced.to_dict("records"):
+        source_name = str(row["source_name"])
+        calendar_value = str(row.get("Calendar", "")).strip()
+        shift_value = _to_int_shift(row.get("Shift"), default=None)
+
+        if not calendar_value:
+            errors.append(f"{source_name}: пустой календарь")
+        if shift_value is None:
+            errors.append(f"{source_name}: некорректный Shift")
+        else:
+            row["Shift"] = shift_value
+
+    if errors:
+        return synced, errors
+    return synced, []
+
+
+def _calendar_options_for_mapping(mapping_df: pd.DataFrame) -> list[str]:
+    options = set(CALENDAR_COLUMNS)
+    if "Calendar" in mapping_df.columns:
+        options.update(
+            {
+                str(value).strip()
+                for value in mapping_df["Calendar"].tolist()
+                if str(value).strip()
+            }
+        )
+    return sorted(options)
+
+
 def main() -> None:
     st.set_page_config(page_title="Парсер процентных ставок", layout="wide")
     st.title("Парсер процентных ставок с выгрузкой в Excel")
@@ -477,7 +638,7 @@ def main() -> None:
         "NFEASWAP (1W-1Y), "
         "ESTER и EURIBOR 1M/3M/6M. "
         "Данные загружаются автоматически при открытии страницы, обновляются каждый час и по кнопке **Обновить сейчас**. "
-        "Во вкладке **Календари** можно редактировать праздничные даты по календарям."
+        "Во вкладках **Календари** и **Маппинг ставок** можно настраивать праздничные даты и соответствие ставок календарям/сдвигам."
     )
     with st.expander("Авторизация Cbonds (для закрытых источников)", expanded=False):
         cbonds_login = st.text_input(
@@ -519,6 +680,16 @@ def main() -> None:
     refresh_now = st.button("Обновить сейчас", type="primary", use_container_width=True)
 
     source_configs = _fixed_source_configs()
+    source_names_for_mapping = [source.name for source in source_configs]
+
+    if "rate_calendar_mapping" not in st.session_state:
+        st.session_state.rate_calendar_mapping = _sync_rate_calendar_mapping(
+            _load_rate_calendar_mapping(), source_names_for_mapping
+        )
+    else:
+        st.session_state.rate_calendar_mapping = _sync_rate_calendar_mapping(
+            st.session_state.rate_calendar_mapping, source_names_for_mapping
+        )
 
     refresh_reason: str | None = None
     if st.session_state.results.empty:
@@ -572,7 +743,9 @@ def main() -> None:
         refresh_label = reason_labels.get(st.session_state.last_refresh_reason, "обновление")
         st.caption(f"Последнее обновление: {refreshed_at} ({refresh_label}).")
 
-    rates_tab, calendars_tab = st.tabs(["Ставки", "Календари"])
+    rates_tab, calendars_tab, mapping_tab = st.tabs(
+        ["Ставки", "Календари", "Маппинг ставок"]
+    )
 
     with rates_tab:
         results = st.session_state.results
@@ -696,6 +869,74 @@ def main() -> None:
                 _load_holiday_calendars()
             )
             st.success("Календари загружены из файла.")
+            st.rerun()
+
+    with mapping_tab:
+        st.subheader("Маппинг ставок к календарям и сдвигам")
+        st.caption(
+            "Строки автоматически синхронизированы с источниками на вкладке «Ставки». "
+            "Изменяйте только Calendar и Shift."
+        )
+        calendar_options = _calendar_options_for_mapping(st.session_state.rate_calendar_mapping)
+        mapping_editor = st.data_editor(
+            st.session_state.rate_calendar_mapping,
+            num_rows="fixed",
+            hide_index=True,
+            use_container_width=True,
+            key="rate_calendar_mapping_editor",
+            column_config={
+                "source_name": st.column_config.TextColumn("source_name", disabled=True),
+                "Calendar": st.column_config.SelectboxColumn(
+                    "Calendar", options=calendar_options, required=True
+                ),
+                "Shift": st.column_config.NumberColumn("Shift", step=1, format="%d"),
+            },
+        )
+        st.session_state.rate_calendar_mapping = _sync_rate_calendar_mapping(
+            mapping_editor, source_names_for_mapping
+        )
+
+        save_map_col, reload_map_col, map_hint_col = st.columns([1, 1, 2.5])
+        with save_map_col:
+            save_mapping = st.button(
+                "Сохранить маппинг",
+                type="primary",
+                use_container_width=True,
+                key="save_rate_mapping_button",
+            )
+        with reload_map_col:
+            reload_mapping = st.button(
+                "Перезагрузить маппинг",
+                use_container_width=True,
+                key="reload_rate_mapping_button",
+            )
+        with map_hint_col:
+            st.caption(
+                "Calendar выбирается из выпадающего списка доступных календарей. "
+                "Shift задаётся в днях."
+            )
+
+        if save_mapping:
+            validated_mapping, mapping_errors = _validate_rate_calendar_mapping(
+                st.session_state.rate_calendar_mapping, source_names_for_mapping
+            )
+            if mapping_errors:
+                st.error("Найдены ошибки в маппинге: " + "; ".join(mapping_errors[:8]))
+            else:
+                try:
+                    _save_rate_calendar_mapping(validated_mapping)
+                except OSError as exc:
+                    st.error(f"Не удалось сохранить маппинг: {exc}")
+                else:
+                    st.session_state.rate_calendar_mapping = validated_mapping
+                    st.success("Маппинг ставок сохранён.")
+                    st.rerun()
+
+        if reload_mapping:
+            st.session_state.rate_calendar_mapping = _sync_rate_calendar_mapping(
+                _load_rate_calendar_mapping(), source_names_for_mapping
+            )
+            st.success("Маппинг ставок загружен из файла.")
             st.rerun()
 
 
