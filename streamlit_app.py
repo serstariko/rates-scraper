@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 import json
 from pathlib import Path
@@ -330,6 +330,147 @@ def _table_height(row_count: int, max_height: int = 1800) -> int:
     return min(48 + visible_rows * 35, max_height)
 
 
+def _parse_ddmmyyyy_date(value: object) -> datetime.date | None:
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    if not text_value:
+        return None
+    try:
+        return datetime.strptime(text_value, "%d.%m.%Y").date()
+    except ValueError:
+        return None
+
+
+def _calendar_holiday_sets_from_dataframe(
+    calendars_df: pd.DataFrame,
+) -> tuple[dict[str, set[datetime.date]], list[str]]:
+    calendars_dict, invalid_values = _calendar_dataframe_to_dict(calendars_df)
+    holiday_sets: dict[str, set[datetime.date]] = {}
+    for calendar_name, values in calendars_dict.items():
+        holiday_sets[calendar_name] = {
+            datetime.strptime(value, "%d.%m.%Y").date() for value in values
+        }
+    return holiday_sets, invalid_values
+
+
+def _holidays_for_calendar_expression(
+    calendar_expression: str, holiday_sets: dict[str, set[datetime.date]]
+) -> set[datetime.date]:
+    parts = [part.strip() for part in calendar_expression.split("/") if part.strip()]
+    if not parts:
+        return set()
+
+    holidays: set[datetime.date] = set()
+    for part in parts:
+        holidays.update(holiday_sets.get(part, set()))
+    return holidays
+
+
+def _is_business_day(
+    day: datetime.date, calendar_expression: str, holiday_sets: dict[str, set[datetime.date]]
+) -> bool:
+    if day.weekday() >= 5:
+        return False
+    holidays = _holidays_for_calendar_expression(calendar_expression, holiday_sets)
+    return day not in holidays
+
+
+def _required_business_date(
+    calendar_expression: str,
+    shift: int,
+    holiday_sets: dict[str, set[datetime.date]],
+    base_date: datetime.date,
+) -> datetime.date:
+    candidate = base_date
+    while not _is_business_day(candidate, calendar_expression, holiday_sets):
+        candidate = candidate - timedelta(days=1)
+
+    if shift == 0:
+        return candidate
+
+    direction = -1 if shift < 0 else 1
+    remaining = abs(shift)
+    while remaining > 0:
+        candidate = candidate + timedelta(days=direction)
+        if _is_business_day(candidate, calendar_expression, holiday_sets):
+            remaining -= 1
+    return candidate
+
+
+def _mapping_lookup(mapping_df: pd.DataFrame) -> dict[str, tuple[str, int]]:
+    lookup: dict[str, tuple[str, int]] = {}
+    if mapping_df.empty:
+        return lookup
+    for row in mapping_df.to_dict("records"):
+        source_name = str(row.get("source_name", "")).strip()
+        if not source_name:
+            continue
+        calendar_value = str(row.get("Calendar", "")).strip()
+        default_calendar, default_shift = _default_rate_calendar_mapping(source_name)
+        if not calendar_value:
+            calendar_value = default_calendar
+        shift_value = _to_int_shift(row.get("Shift"), default=default_shift)
+        if shift_value is None:
+            shift_value = default_shift
+        lookup[source_name] = (calendar_value, shift_value)
+    return lookup
+
+
+def _with_required_date_validation(
+    results: pd.DataFrame,
+    mapping_df: pd.DataFrame,
+    holiday_calendars_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, list[str]]:
+    if results.empty:
+        return results.copy(), []
+
+    holiday_sets, invalid_values = _calendar_holiday_sets_from_dataframe(holiday_calendars_df)
+    mapping_by_source = _mapping_lookup(mapping_df)
+    base_date = datetime.now(MOSCOW_TZ).date()
+
+    validated = results.copy()
+    required_dates: list[str | None] = []
+    date_matches: list[bool | None] = []
+
+    for row in validated.to_dict("records"):
+        source_name = str(row.get("source_name", "")).strip()
+        if source_name in mapping_by_source:
+            calendar_expression, shift = mapping_by_source[source_name]
+        else:
+            calendar_expression, shift = _default_rate_calendar_mapping(source_name)
+
+        required_date = _required_business_date(
+            calendar_expression=calendar_expression,
+            shift=shift,
+            holiday_sets=holiday_sets,
+            base_date=base_date,
+        )
+        actual_date = _parse_ddmmyyyy_date(row.get("rate_date"))
+
+        required_dates.append(required_date.strftime("%d.%m.%Y"))
+        date_matches.append(actual_date == required_date if actual_date is not None else False)
+
+    validated["required_rate_date"] = required_dates
+    validated["required_date_matches"] = date_matches
+    return validated, invalid_values
+
+
+def _style_summary_date_column(
+    summary_table: pd.DataFrame, date_match_by_source: dict[str, bool | None]
+):
+    def _row_style(row: pd.Series) -> list[str]:
+        styles = [""] * len(row.index)
+        source_name = str(row.get("Источник", "")).strip()
+        match_status = date_match_by_source.get(source_name)
+        if match_status is False and "Дата текущей" in row.index:
+            date_idx = row.index.get_loc("Дата текущей")
+            styles[date_idx] = "background-color: #fecaca; color: #7f1d1d; font-weight: 600;"
+        return styles
+
+    return summary_table.style.apply(_row_style, axis=1)
+
+
 def _build_summary_results_table(results: pd.DataFrame) -> pd.DataFrame:
     summary_columns = [
         "source_name",
@@ -371,6 +512,8 @@ def _build_technical_results_table(results: pd.DataFrame) -> pd.DataFrame:
         "parser",
         "rate_percent",
         "rate_date",
+        "required_rate_date",
+        "required_date_matches",
         "previous_rate_percent",
         "previous_rate_date",
         "relative_change_percent",
@@ -822,13 +965,32 @@ def main() -> None:
             if selected_status != "Все":
                 filtered_results = filtered_results[filtered_results["status"] == selected_status]
 
-            summary_table = _build_summary_results_table(filtered_results)
-            technical_table = _build_technical_results_table(filtered_results)
+            validated_results, invalid_calendar_values = _with_required_date_validation(
+                filtered_results,
+                st.session_state.rate_calendar_mapping,
+                st.session_state.holiday_calendars,
+            )
+            if invalid_calendar_values:
+                invalid_preview = ", ".join(invalid_calendar_values[:6])
+                if len(invalid_calendar_values) > 6:
+                    invalid_preview += ", ..."
+                st.warning(
+                    "Некоторые праздничные даты в календарях имеют неверный формат и не участвуют в валидации: "
+                    f"{invalid_preview}"
+                )
+
+            summary_table = _build_summary_results_table(validated_results)
+            technical_table = _build_technical_results_table(validated_results)
+            date_match_by_source = {
+                str(row.get("source_name", "")): row.get("required_date_matches")
+                for row in validated_results.to_dict("records")
+            }
 
             summary_tab, technical_tab = st.tabs(["Основная таблица", "Технические детали"])
             with summary_tab:
+                styled_summary = _style_summary_date_column(summary_table, date_match_by_source)
                 st.dataframe(
-                    summary_table,
+                    styled_summary,
                     use_container_width=True,
                     hide_index=True,
                     height=_table_height(len(summary_table)),
